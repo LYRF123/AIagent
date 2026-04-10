@@ -1,0 +1,178 @@
+﻿[
+  {
+    "paper_id": "rag",
+    "title": "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks",
+    "year": 2020,
+    "venue": "NeurIPS",
+    "authors": ["Patrick Lewis", "Ethan Perez", "Aleksandara Piktus"],
+    "source_url": "https://arxiv.org/abs/2005.11401",
+    "topics": ["retrieval augmented generation", "knowledge intensive NLP", "open domain question answering"],
+    "summary": "This paper combines a parametric sequence model with a non-parametric document retriever so the model can condition generation on retrieved evidence instead of relying only on memorized knowledge.",
+    "methods": [
+      "Use dense retrieval to fetch supporting passages at generation time.",
+      "Fuse retrieved documents with a generator to answer knowledge-intensive questions."
+    ],
+    "findings": [
+      "Retrieval grounding improves factuality and adaptability on open-domain QA and related knowledge tasks.",
+      "External memory makes it easier to update knowledge without retraining the whole model."
+    ],
+    "limitations": [
+      "System quality still depends heavily on retriever recall and evidence coverage.",
+      "The paper focuses on retrieval augmentation rather than complex multi-step tool use."
+    ]
+  },
+  {
+    "paper_id": "react",
+    "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+    "year": 2022,
+    "venue": "ICLR Workshop / arXiv",
+    "authors": ["Shunyu Yao", "Jeffrey Zhao", "Dian Yu"],
+    "source_url": "https://arxiv.org/abs/2210.03629",
+    "topics": ["reasoning and acting", "tool use", "interactive decision making"],
+    "summary": "ReAct alternates reasoning traces with actions so a language model can plan, gather observations, and revise its next step based on tool feedback.",
+    "methods": [
+      "Interleave chain-of-thought style reasoning with explicit actions.",
+      "Use observations from external environments to steer later reasoning steps."
+    ],
+    "findings": [
+      "Reasoning plus action helps with tasks that require both deliberation and external information gathering.",
+      "The prompting pattern is more interpretable than hidden-only reasoning because intermediate plans and actions are visible."
+    ],
+    "limitations": [
+      "Performance is prompt-sensitive and can degrade when the model fails to choose useful actions.",
+      "The paper demonstrates the pattern but does not solve robust long-horizon memory management."
+    ]
+  },
+  {
+    "paper_id": "toolformer",
+    "title": "Toolformer: Language Models Can Teach Themselves to Use Tools",
+    "year": 2023,
+    "venue": "NeurIPS",
+    "authors": ["Timo Schick", "Jane Dwivedi-Yu", "Roberta Dessì"],
+    "source_url": "https://arxiv.org/abs/2302.04761",
+    "topics": ["tool use", "self supervised API calling", "language model augmentation"],
+    "summary": "Toolformer trains a language model to decide when and how to call external tools by inserting API calls into text and learning from the resulting improvements.",
+    "methods": [
+      "Generate synthetic demonstrations of API usage from a small seed set.",
+      "Train the language model to invoke tools such as calculators, search, or translation APIs."
+    ],
+    "findings": [
+      "A model can learn tool invocation behavior from self-supervised data generation rather than full manual annotation.",
+      "Properly chosen API calls improve factuality and task coverage on tool-relevant queries."
+    ],
+    "limitations": [
+      "The approach depends on a curated tool set and a filtering process for useful synthetic calls.",
+      "It focuses on single-step API use more than rich multi-agent orchestration."
+    ]
+  },
+  {
+    "paper_id": "self-rag",
+    "title": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection",
+    "year": 2023,
+    "venue": "ICLR",
+    "authors": ["Akari Asai", "Zequn Wang", "Avirup Sil"],
+    "source_url": "https://arxiv.org/abs/2310.11511",
+    "topics": ["self reflection", "retrieval augmented generation", "critique tokens"],
+    "summary": "Self-RAG extends retrieval-augmented generation with learned reflection behavior so the model can decide when to retrieve, how to critique its own output, and when evidence is sufficient.",
+    "methods": [
+      "Train the model with special reflection tokens that control retrieval and critique behavior.",
+      "Let the generator judge whether more evidence is needed before continuing."
+    ],
+    "findings": [
+      "Joint retrieval and self-critique improves answer quality and evidence use compared with static retrieval pipelines.",
+      "The model can avoid unnecessary retrieval on easier questions while still grounding harder cases."
+    ],
+    "limitations": [
+      "Training requires specially constructed supervision for reflection decisions.",
+      "The method still inherits weaknesses from the underlying retriever and base model."
+    ]
+  },
+  {
+    "paper_id": "autogen",
+    "title": "AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation",
+    "year": 2023,
+    "venue": "COLM",
+    "authors": ["Qingyun Wu", "Gagan Bansal", "Jiacheng Zhang"],
+    "source_url": "https://arxiv.org/abs/2308.08155",
+    "topics": ["multi agent", "conversation framework", "tool and human collaboration"],
+    "summary": "AutoGen presents a conversation-centric framework in which specialized agents and optional human users collaborate through structured message passing to solve tasks.",
+    "methods": [
+      "Represent workflows as conversations among assistant agents, user proxies, and tools.",
+      "Allow code execution, tool invocation, and human feedback inside the same interaction loop."
+    ],
+    "findings": [
+      "Multi-agent conversation can make complex tasks easier to decompose into specialized roles.",
+      "The framework lowers prototyping cost for agentic systems that need iterative coordination."
+    ],
+    "limitations": [
+      "Conversation-heavy workflows can become expensive and unstable without strong control policies.",
+      "The framework itself does not guarantee correctness or efficient planning."
+    ]
+  },
+  {
+    "paper_id": "metagpt",
+    "title": "MetaGPT: Meta Programming for Multi-Agent Collaborative Framework",
+    "year": 2023,
+    "venue": "ICLR Workshop / arXiv",
+    "authors": ["Sirui Hong", "Yiping Wu", "Jieqi Yu"],
+    "source_url": "https://arxiv.org/abs/2308.00352",
+    "topics": ["multi agent software development", "role playing", "standard operating procedures"],
+    "summary": "MetaGPT models software production as a company-like workflow where role-specific agents follow structured operating procedures to produce design, code, and review artifacts.",
+    "methods": [
+      "Assign roles such as product manager, architect, engineer, and reviewer to different agents.",
+      "Use standard operating procedures to constrain communication and artifact handoff."
+    ],
+    "findings": [
+      "Role specialization can improve coordination compared with unconstrained agent discussion.",
+      "Structured intermediate artifacts help keep long workflows aligned with product requirements."
+    ],
+    "limitations": [
+      "The framework targets software workflows and may not transfer cleanly to every domain.",
+      "Complex multi-agent pipelines still face compounding error and cost issues."
+    ]
+  },
+  {
+    "paper_id": "voyager",
+    "title": "Voyager: An Open-Ended Embodied Agent with Large Language Models",
+    "year": 2023,
+    "venue": "arXiv",
+    "authors": ["Guanzhi Wang", "Yuqi Xie", "Denny Zhou"],
+    "source_url": "https://arxiv.org/abs/2305.16291",
+    "topics": ["embodied agent", "curriculum learning", "skill library"],
+    "summary": "Voyager uses an LLM-driven embodied agent in Minecraft that builds a reusable skill library and an automatic curriculum to keep exploring harder tasks over time.",
+    "methods": [
+      "Generate a curriculum of tasks automatically as the agent progresses.",
+      "Store executable skills in a library that can be retrieved and reused later."
+    ],
+    "findings": [
+      "Skill accumulation and curriculum design help the agent explore more effectively than one-shot prompting.",
+      "The environment demonstrates how memory and iterative execution matter for long-horizon tasks."
+    ],
+    "limitations": [
+      "Results are tied to a sandboxed game environment and do not directly solve general software tasks.",
+      "Success depends on reliable code execution and environment feedback."
+    ]
+  },
+  {
+    "paper_id": "swe-agent",
+    "title": "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering",
+    "year": 2024,
+    "venue": "ICLR",
+    "authors": ["John Yang", "Carlos E. Jimenez", "Alexander Wettig"],
+    "source_url": "https://arxiv.org/abs/2405.15793",
+    "topics": ["software engineering agent", "agent computer interface", "issue resolution"],
+    "summary": "SWE-agent studies how an agent-computer interface can improve language-model performance on software issue resolution by structuring file navigation, editing, and test execution.",
+    "methods": [
+      "Design an interface that exposes codebase navigation and editing actions to the agent.",
+      "Combine repository interaction with evaluation on realistic software engineering tasks."
+    ],
+    "findings": [
+      "Better interfaces materially improve agent performance on bug-fixing benchmarks.",
+      "Task success depends on both language-model reasoning and environment affordances."
+    ],
+    "limitations": [
+      "The benchmark is expensive and sensitive to execution environment details.",
+      "The paper is about software engineering agents rather than scientific document QA."
+    ]
+  }
+]

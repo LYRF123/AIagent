@@ -1,0 +1,26 @@
+[project]
+name = "research-agent"
+version = "0.3.0"
+description = "Research assistant agent with LangChain, FAISS, DashScope Qwen, and local document import"
+requires-python = ">=3.12"
+dependencies = [
+  "faiss-cpu",
+  "langchain-community",
+  "langchain-openai",
+  "langchain-text-splitters",
+  "numpy",
+  "openai",
+  "pydantic",
+  "pypdf",
+  "pytest",
+  "python-docx",
+  "scikit-learn"
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+testpaths = [
+  "tests"
+]

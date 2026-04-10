@@ -1,0 +1,26 @@
+﻿[
+  {
+    "case_id": "qa-1",
+    "question": "How does ReAct combine reasoning with tool use?",
+    "expected_paper_ids": ["react"],
+    "expected_keywords": ["reasoning", "actions"]
+  },
+  {
+    "case_id": "qa-2",
+    "question": "Which paper adds self reflection to retrieval augmented generation?",
+    "expected_paper_ids": ["self-rag"],
+    "expected_keywords": ["reflection", "retrieve"]
+  },
+  {
+    "case_id": "qa-3",
+    "question": "What is the main idea of Toolformer?",
+    "expected_paper_ids": ["toolformer"],
+    "expected_keywords": ["tool", "api"]
+  },
+  {
+    "case_id": "qa-4",
+    "question": "Which framework uses role specific agents and standard operating procedures for software development?",
+    "expected_paper_ids": ["metagpt"],
+    "expected_keywords": ["role", "procedures"]
+  }
+]
