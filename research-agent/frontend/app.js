@@ -1,20 +1,31 @@
 ﻿const modeButtons = Array.from(document.querySelectorAll(".mode-button"));
 const modeFields = Array.from(document.querySelectorAll("[data-mode]"));
 const presetButtons = Array.from(document.querySelectorAll(".preset-button"));
+const utilityNavButtons = Array.from(document.querySelectorAll("[data-utility-panel-target]"));
+const utilityPanels = Array.from(document.querySelectorAll("[data-utility-panel]"));
 const form = document.getElementById("agent-form");
 const uploadForm = document.getElementById("upload-form");
 const uploadFile = document.getElementById("upload-file");
 const refreshDocumentsButton = document.getElementById("refresh-documents");
 const submitButton = document.getElementById("submit-button");
 const healthButton = document.getElementById("health-button");
+const newSessionButton = document.getElementById("new-session");
+const openToolsButton = document.getElementById("open-tools");
+const closeUtilityButton = document.getElementById("close-utility");
+const strictGroundedInput = document.getElementById("strict-grounded");
 const statusPill = document.getElementById("status-pill");
+const sessionsOutput = document.getElementById("sessions-output");
 const summaryOutput = document.getElementById("summary-output");
 const detailOutput = document.getElementById("detail-output");
 const documentsOutput = document.getElementById("documents-output");
 const jsonOutput = document.getElementById("json-output");
 const modeBadge = document.getElementById("mode-badge");
+const utilityDrawer = document.getElementById("utility-drawer");
+const utilityTitle = document.getElementById("utility-title");
 
 let currentMode = "ask";
+let currentSessionId = "";
+let currentUtility = "presets";
 
 const modeLabels = {
   ask: "问答",
@@ -32,6 +43,13 @@ const sectionLabels = {
   topics: "主题词",
 };
 
+const utilityLabels = {
+  presets: "快捷示例",
+  import: "文档导入",
+  documents: "知识库文件",
+  json: "原始 JSON",
+};
+
 function setStatus(text, kind = "idle") {
   statusPill.textContent = text;
   statusPill.className = `status-pill ${kind}`;
@@ -44,6 +62,49 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function formatTimestamp(value) {
+  if (!value) {
+    return "";
+  }
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+  return timestamp.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function showUtilityPanel(target) {
+  currentUtility = target;
+  utilityTitle.textContent = utilityLabels[target] || "工具面板";
+  utilityNavButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.utilityPanelTarget === target);
+  });
+  utilityPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.utilityPanel !== target);
+  });
+}
+
+function openUtilityDrawer(target = currentUtility || "presets") {
+  utilityDrawer.classList.remove("hidden");
+  if (openToolsButton) {
+    openToolsButton.classList.add("active");
+  }
+  showUtilityPanel(target);
+}
+
+function closeUtilityDrawer() {
+  utilityDrawer.classList.add("hidden");
+  if (openToolsButton) {
+    openToolsButton.classList.remove("active");
+  }
 }
 
 function showMode(mode) {
@@ -113,6 +174,104 @@ function renderEvidence(evidence) {
   return `<div class="detail-block"><h4>证据片段</h4>${rows}</div>`;
 }
 
+function renderHistory(history) {
+  if (!history || history.length === 0) {
+    return `<div class="detail-block"><h4>会话历史</h4><p class="block-note">当前没有保存的会话历史。</p></div>`;
+  }
+  const rows = history.map((item) => `
+    <div class="message-item ${escapeHtml(item.role)}">
+      <div class="message-role">${item.role === "user" ? "用户" : "助手"}</div>
+      <p>${escapeHtml(item.content || "")}</p>
+    </div>
+  `).join("");
+  return `<div class="detail-block"><h4>会话历史</h4><div class="message-list">${rows}</div></div>`;
+}
+
+function renderSessionPanel(session) {
+  summaryOutput.innerHTML = `
+    <div class="summary-block primary">
+      <h3>${escapeHtml(session.title || "新会话")}</h3>
+      <p class="summary-main">共 ${escapeHtml(session.turn_count || 0)} 轮问答</p>
+      <p class="summary-meta">更新时间：${escapeHtml(formatTimestamp(session.updated_at || ""))}</p>
+    </div>
+    <div class="summary-block">
+      <h3>使用方式</h3>
+      <p class="summary-subtext">继续在当前模式里提问，新结果会自动追加到这个会话。</p>
+    </div>
+  `;
+  detailOutput.innerHTML = `
+    ${renderHistory(session.messages)}
+    <div class="detail-block">
+      <h4>当前限制</h4>
+      <p class="block-note">历史会话只保存消息内容；证据片段和调用轨迹会在新的问答结果里展示。</p>
+    </div>
+  `;
+  jsonOutput.textContent = JSON.stringify(session, null, 2);
+}
+
+function renderStreamingAskState(answer, sessionTitle = "新会话") {
+  const visibleAnswer = answer || "正在生成回答...";
+  summaryOutput.innerHTML = `
+    <div class="summary-block primary">
+      <h3>回答生成中</h3>
+      <p class="summary-main">${escapeHtml(visibleAnswer)}</p>
+      <p class="summary-meta">会话标题：${escapeHtml(sessionTitle || "新会话")}</p>
+    </div>
+    <div class="summary-block">
+      <h3>流式输出</h3>
+      <p class="summary-subtext">回答正在逐段返回；最终证据、轨迹和完整 JSON 会在生成结束后补齐。</p>
+    </div>
+  `;
+  detailOutput.innerHTML = `
+    <div class="detail-block">
+      <h4>实时输出</h4>
+      <p>${escapeHtml(visibleAnswer)}</p>
+      <p class="block-note">系统会在流结束后补充证据片段、调用轨迹和完整会话历史。</p>
+    </div>
+  `;
+}
+
+function renderSessions(items) {
+  if (!items || items.length === 0) {
+    sessionsOutput.innerHTML = `<p class="empty-note">还没有会话。</p>`;
+    return;
+  }
+
+  sessionsOutput.innerHTML = items.map((item) => `
+    <div class="session-card ${item.session_id === currentSessionId ? "active" : ""}">
+      <button class="session-open" data-session-id="${escapeHtml(item.session_id)}" type="button">
+        <strong>${escapeHtml(item.title || "新会话")}</strong>
+        <p class="block-note">${escapeHtml(item.preview || "还没有历史消息。")}</p>
+        <p class="session-meta">${escapeHtml(`${item.turn_count || 0} 轮 · ${formatTimestamp(item.updated_at || "")}`)}</p>
+      </button>
+      <button class="danger-button compact-button delete-session" data-session-id="${escapeHtml(item.session_id)}" type="button">删除</button>
+    </div>
+  `).join("");
+
+  document.querySelectorAll(".session-open").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const sessionId = button.dataset.sessionId;
+      if (!sessionId) {
+        return;
+      }
+      await loadSession(sessionId);
+    });
+  });
+
+  document.querySelectorAll(".delete-session").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const sessionId = button.dataset.sessionId;
+      if (!sessionId) {
+        return;
+      }
+      if (!window.confirm("确认删除这个会话吗？历史消息会一起清空。")) {
+        return;
+      }
+      await deleteSession(sessionId);
+    });
+  });
+}
+
 function renderDocuments(items) {
   if (!items || items.length === 0) {
     documentsOutput.innerHTML = `<p class="empty-note">还没有导入文件。</p>`;
@@ -157,6 +316,98 @@ async function refreshDocuments() {
   }
 }
 
+async function refreshSessions(nextSessionId = currentSessionId) {
+  try {
+    const response = await fetch("/sessions");
+    const data = await response.json();
+    const items = data.items || [];
+    if (items.some((item) => item.session_id === nextSessionId)) {
+      currentSessionId = nextSessionId;
+    } else if (!items.some((item) => item.session_id === currentSessionId)) {
+      currentSessionId = "";
+    }
+    renderSessions(items);
+  } catch {
+    sessionsOutput.innerHTML = `<p class="empty-note">会话列表加载失败。</p>`;
+  }
+}
+
+async function loadSession(sessionId) {
+  setStatus("正在加载会话...", "loading");
+  try {
+    const response = await fetch(`/sessions/${encodeURIComponent(sessionId)}`);
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || `加载失败：${response.status}`);
+    }
+    currentSessionId = sessionId;
+    renderSessionPanel(data);
+    await refreshSessions(sessionId);
+    setStatus("会话已加载", "success");
+  } catch (error) {
+    setStatus("会话加载失败", "error");
+    renderEmptySummary("会话加载失败", error.message || "无法读取会话详情");
+    detailOutput.innerHTML = `<p class="empty-note">请刷新会话列表后重试。</p>`;
+    jsonOutput.textContent = JSON.stringify({ error: error.message }, null, 2);
+  }
+}
+
+async function createSession() {
+  setStatus("正在创建会话...", "loading");
+  try {
+    const response = await fetch("/sessions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || `创建失败：${response.status}`);
+    }
+    currentSessionId = data.session.session_id;
+    renderSessionPanel(data.session);
+    renderSessions(data.sessions || []);
+    setStatus("已创建新会话", "success");
+  } catch (error) {
+    setStatus("创建失败", "error");
+    renderEmptySummary("创建会话失败", error.message || "会话创建失败");
+    detailOutput.innerHTML = `<p class="empty-note">请稍后重试。</p>`;
+    jsonOutput.textContent = JSON.stringify({ error: error.message }, null, 2);
+  }
+}
+
+async function deleteSession(sessionId) {
+  setStatus("正在删除会话...", "loading");
+  try {
+    const response = await fetch("/delete-session", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || `删除失败：${response.status}`);
+    }
+    if (currentSessionId === sessionId) {
+      currentSessionId = "";
+      renderEmptySummary("会话已删除", "可以新建会话，或者直接提问自动生成新的会话。");
+      detailOutput.innerHTML = `<p class="empty-note">当前没有选中的会话。</p>`;
+      jsonOutput.textContent = JSON.stringify(data, null, 2);
+    }
+    renderSessions(data.sessions || []);
+    setStatus("会话已删除", "success");
+  } catch (error) {
+    setStatus("删除失败", "error");
+    renderEmptySummary("删除会话失败", error.message || "会话删除失败");
+    detailOutput.innerHTML = `<p class="empty-note">请稍后重试。</p>`;
+    jsonOutput.textContent = JSON.stringify({ error: error.message }, null, 2);
+  }
+}
+
 function renderSearchSummary(data) {
   if (!data || data.length === 0) {
     renderEmptySummary("没有检索结果", "可以换一个更具体的关键词，或者把 Top K 调大一点。");
@@ -173,7 +424,7 @@ function renderSearchSummary(data) {
     </div>
     <div class="summary-block">
       <h3>可快速阅读的信息</h3>
-      <p class="summary-subtext">先看最上面的标题和 highlights，再决定是否继续问答或做对比。</p>
+      <p class="summary-subtext">先看标题和 highlights，再决定是否继续问答或做对比。</p>
     </div>
   `;
 
@@ -197,17 +448,22 @@ function renderSearchSummary(data) {
 }
 
 function renderAskSummary(data) {
+  const helperTitle = data.insufficient_evidence ? "证据状态" : "快速判断";
+  const helperText = data.insufficient_evidence
+    ? "当前问题没有检索到足够证据，系统已阻止自由生成回答。你可以换关键词、缩小问题范围，或关闭严格证据模式。"
+    : "如果回答里提到了具体论文和机制，再到下方查看证据与轨迹。";
   summaryOutput.innerHTML = `
-    <div class="summary-block primary">
+    <div class="summary-block primary ${data.insufficient_evidence ? "warning" : ""}">
       <h3>回答</h3>
       <p class="summary-main">${escapeHtml(data.answer || "")}</p>
+      <p class="summary-meta">会话标题：${escapeHtml(data.session_title || "未命名会话")}</p>
     </div>
     <div class="summary-block">
-      <h3>快速判断</h3>
-      <p class="summary-subtext">如果回答里提到了具体论文和机制，再去右下方查看证据和调用轨迹。</p>
+      <h3>${escapeHtml(helperTitle)}</h3>
+      <p class="summary-subtext">${escapeHtml(helperText)}</p>
     </div>
   `;
-  detailOutput.innerHTML = `${renderEvidence(data.evidence)}${renderTrace(data.trace)}`;
+  detailOutput.innerHTML = `${renderHistory(data.history)}${renderEvidence(data.evidence)}${renderTrace(data.trace)}`;
 }
 
 function renderCompareSummary(data) {
@@ -330,6 +586,8 @@ function buildPayload(mode) {
       payload: {
         question: document.getElementById("ask-question").value,
         top_k: topK,
+        session_id: currentSessionId || undefined,
+        strict_grounded: strictGroundedInput.checked,
       },
     };
   }
@@ -359,8 +617,136 @@ function buildPayload(mode) {
   };
 }
 
+async function readEventStream(response, onEvent) {
+  if (!response.body) {
+    throw new Error("当前浏览器不支持流式响应读取。");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  function processBlock(block) {
+    if (!block.trim()) {
+      return;
+    }
+    let eventType = "message";
+    const dataLines = [];
+    block.split("\n").forEach((line) => {
+      if (line.startsWith("event:")) {
+        eventType = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        dataLines.push(line.slice(5).trim());
+      }
+    });
+    const rawData = dataLines.join("\n");
+    const parsed = rawData ? JSON.parse(rawData) : {};
+    onEvent(eventType, parsed);
+  }
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+    let boundary = buffer.indexOf("\n\n");
+    while (boundary !== -1) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      processBlock(block);
+      boundary = buffer.indexOf("\n\n");
+    }
+
+    if (done) {
+      if (buffer.trim()) {
+        processBlock(buffer);
+      }
+      break;
+    }
+  }
+}
+
+async function runAskModeStream(payload) {
+  let sessionTitle = "新会话";
+  let streamedAnswer = "";
+  let finalPayload = null;
+  let streamError = null;
+
+  setStatus("正在流式生成回答...", "loading");
+  renderStreamingAskState(streamedAnswer, sessionTitle);
+  jsonOutput.textContent = JSON.stringify({ status: "streaming", question: payload.question }, null, 2);
+
+  const response = await fetch("/ask-stream", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || `请求失败：${response.status}`);
+  }
+
+  await readEventStream(response, (eventType, data) => {
+    if (eventType === "session") {
+      currentSessionId = data.session_id || currentSessionId;
+      sessionTitle = data.session_title || sessionTitle;
+      renderStreamingAskState(streamedAnswer, sessionTitle);
+      return;
+    }
+    if (eventType === "chunk") {
+      streamedAnswer += data.delta || "";
+      renderStreamingAskState(streamedAnswer, sessionTitle);
+      jsonOutput.textContent = JSON.stringify(
+        {
+          status: "streaming",
+          session_id: currentSessionId || undefined,
+          answer_preview: streamedAnswer,
+        },
+        null,
+        2,
+      );
+      return;
+    }
+    if (eventType === "final") {
+      finalPayload = data;
+      return;
+    }
+    if (eventType === "error") {
+      streamError = new Error(data.error || "流式输出失败");
+    }
+  });
+
+  if (streamError) {
+    throw streamError;
+  }
+  if (!finalPayload) {
+    throw new Error("流式请求提前结束，未收到最终结果。");
+  }
+
+  setStatus("问答完成", "success");
+  renderAskSummary(finalPayload);
+  jsonOutput.textContent = JSON.stringify(finalPayload, null, 2);
+  if (finalPayload.session_id) {
+    currentSessionId = finalPayload.session_id;
+    await refreshSessions(finalPayload.session_id);
+  }
+}
+
 async function runMode(mode) {
   const { endpoint, payload } = buildPayload(mode);
+  if (mode === "ask") {
+    try {
+      await runAskModeStream(payload);
+    } catch (error) {
+      setStatus("请求失败", "error");
+      renderEmptySummary("请求失败", error.message || "发生未知错误");
+      detailOutput.innerHTML = `<p class="empty-note">请检查输入内容或后端服务状态。</p>`;
+      jsonOutput.textContent = JSON.stringify({ error: error.message }, null, 2);
+    }
+    return;
+  }
+
   setStatus(`正在运行${modeLabels[mode]}...`, "loading");
   try {
     const response = await fetch(endpoint, {
@@ -419,6 +805,7 @@ async function importDocument(file) {
   `;
   jsonOutput.textContent = JSON.stringify(data, null, 2);
   renderDocuments(data.documents || []);
+  openUtilityDrawer("documents");
 }
 
 async function deleteDocument(paperId) {
@@ -451,6 +838,7 @@ async function deleteDocument(paperId) {
     `;
     jsonOutput.textContent = JSON.stringify(data, null, 2);
     renderDocuments(data.documents || []);
+    openUtilityDrawer("documents");
   } catch (error) {
     setStatus("删除失败", "error");
     renderEmptySummary("删除失败", error.message || "文档删除失败");
@@ -463,30 +851,36 @@ function applyPreset(name) {
   if (name === "ask-react") {
     showMode("ask");
     document.getElementById("ask-question").value = "ReAct 是如何把推理和工具调用结合起来的？";
+    closeUtilityDrawer();
     return;
   }
   if (name === "ask-model") {
     showMode("ask");
     document.getElementById("ask-question").value = "你是什么模型？";
+    closeUtilityDrawer();
     return;
   }
   if (name === "search-rag") {
     showMode("search");
     document.getElementById("search-query").value = "self reflection retrieval";
+    closeUtilityDrawer();
     return;
   }
   if (name === "compare-agent") {
     showMode("compare");
     document.getElementById("compare-ids").value = "react toolformer";
     document.getElementById("compare-focus").value = "方法、结论和局限性";
+    closeUtilityDrawer();
     return;
   }
   if (name === "review-agent") {
     showMode("review");
     document.getElementById("review-topic").value = "multi agent software development";
+    closeUtilityDrawer();
     return;
   }
   showMode("evaluate");
+  closeUtilityDrawer();
 }
 
 modeButtons.forEach((button) => {
@@ -496,6 +890,31 @@ modeButtons.forEach((button) => {
 presetButtons.forEach((button) => {
   button.addEventListener("click", () => applyPreset(button.dataset.preset));
 });
+
+utilityNavButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    const target = button.dataset.utilityPanelTarget;
+    if (target) {
+      showUtilityPanel(target);
+    }
+  });
+});
+
+if (openToolsButton) {
+  openToolsButton.addEventListener("click", () => {
+    if (utilityDrawer.classList.contains("hidden")) {
+      openUtilityDrawer(currentUtility || "presets");
+    } else {
+      closeUtilityDrawer();
+    }
+  });
+}
+
+if (closeUtilityButton) {
+  closeUtilityButton.addEventListener("click", () => {
+    closeUtilityDrawer();
+  });
+}
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -520,11 +939,20 @@ uploadForm.addEventListener("submit", async (event) => {
   }
 });
 
-refreshDocumentsButton.addEventListener("click", async () => {
-  setStatus("正在刷新文档列表...", "loading");
-  await refreshDocuments();
-  setStatus("文档列表已刷新", "success");
-});
+if (refreshDocumentsButton) {
+  refreshDocumentsButton.addEventListener("click", async () => {
+    setStatus("正在刷新文档列表...", "loading");
+    await refreshDocuments();
+    openUtilityDrawer("documents");
+    setStatus("文档列表已刷新", "success");
+  });
+}
+
+if (newSessionButton) {
+  newSessionButton.addEventListener("click", async () => {
+    await createSession();
+  });
+}
 
 healthButton.addEventListener("click", async () => {
   setStatus("正在检查服务...", "loading");
@@ -549,4 +977,7 @@ healthButton.addEventListener("click", async () => {
 });
 
 showMode(currentMode);
+showUtilityPanel(currentUtility);
+closeUtilityDrawer();
 refreshDocuments();
+refreshSessions();

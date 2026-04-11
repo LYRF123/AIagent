@@ -8,75 +8,76 @@
   </head>
   <body>
     <div class="app-shell">
-      <header class="topbar">
-        <div>
-          <p class="kicker">公开数据科研助手</p>
-          <h1>Research Agent</h1>
-          <p class="subtitle">更清楚地查看输入、摘要结论、证据来源、原始接口返回，以及本地导入的 PDF / Word 文档。</p>
+      <aside class="sidebar">
+        <div class="sidebar-panel brand-panel">
+          <p class="eyebrow">Research Agent</p>
+          <h1>研究助手</h1>
+          <p class="sidebar-copy">把问答、检索和评测收进一个更像对话工作台的界面里。</p>
         </div>
-        <div class="topbar-meta">
-          <div class="meta-card">
-            <span class="meta-label">模型</span>
-            <strong>DashScope · Qwen</strong>
-            <span class="meta-note">接口异常时自动回退到本地规则版</span>
-          </div>
-          <div class="meta-card accent">
-            <span class="meta-label">地址</span>
-            <strong>127.0.0.1:8000</strong>
-            <span class="meta-note">问答、检索、对比、综述、评测与导入共用同一服务</span>
-          </div>
-        </div>
-      </header>
 
-      <main class="layout">
-        <aside class="sidebar card">
+        <div class="sidebar-panel sessions-panel">
           <div class="section-head compact">
             <div>
-              <p class="section-kicker">第一步</p>
-              <h2>选择模式</h2>
+              <p class="section-kicker">Sessions</p>
+              <h2>会话</h2>
             </div>
+            <button id="new-session" class="ghost-button compact-button" type="button">新建</button>
+          </div>
+          <div id="sessions-output" class="session-list">
+            <p class="empty-note">还没有会话。</p>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <header class="workspace-top">
+          <div>
+            <p class="section-kicker">Workspace</p>
+            <h2>当前工作区</h2>
+          </div>
+          <div class="workspace-tools">
+            <button id="open-tools" class="menu-button" type="button">Tools</button>
+            <button id="health-button" class="ghost-button compact-button" type="button">健康检查</button>
+            <div id="mode-badge" class="mode-badge">当前模式：问答</div>
             <div id="status-pill" class="status-pill idle">空闲</div>
           </div>
+        </header>
 
-          <div class="mode-list">
-            <button class="mode-button active" data-mode="ask" type="button">
-              <strong>问答</strong>
-              <span>基于检索证据回答具体问题</span>
-            </button>
-            <button class="mode-button" data-mode="search" type="button">
-              <strong>检索</strong>
-              <span>只看相关论文和关键片段</span>
-            </button>
-            <button class="mode-button" data-mode="compare" type="button">
-              <strong>对比</strong>
-              <span>比较多篇论文的方法、结论、局限</span>
-            </button>
-            <button class="mode-button" data-mode="review" type="button">
-              <strong>综述</strong>
-              <span>围绕主题生成简短研究概览</span>
-            </button>
-            <button class="mode-button" data-mode="evaluate" type="button">
-              <strong>评测</strong>
-              <span>运行内置评测集并查看指标和失败样例</span>
-            </button>
-          </div>
-
-          <div class="section-head compact border-top">
-            <div>
-              <p class="section-kicker">第二步</p>
-              <h2>填写请求</h2>
+        <footer class="composer-shell card">
+          <div class="composer-head">
+            <div class="mode-tabs">
+              <button class="mode-button active" data-mode="ask" type="button">
+                <strong>问答</strong>
+                <span>Answer</span>
+              </button>
+              <button class="mode-button" data-mode="search" type="button">
+                <strong>检索</strong>
+                <span>Search</span>
+              </button>
+              <button class="mode-button" data-mode="compare" type="button">
+                <strong>对比</strong>
+                <span>Compare</span>
+              </button>
+              <button class="mode-button" data-mode="review" type="button">
+                <strong>综述</strong>
+                <span>Review</span>
+              </button>
+              <button class="mode-button" data-mode="evaluate" type="button">
+                <strong>评测</strong>
+                <span>Eval</span>
+              </button>
             </div>
           </div>
 
-          <form id="agent-form" class="form-stack">
+          <form id="agent-form" class="form-stack composer-form">
             <label class="field mode-search hidden" data-mode="search">
               <span>检索词</span>
-              <textarea id="search-query" rows="4">self reflection retrieval</textarea>
+              <textarea id="search-query" rows="6">self reflection retrieval</textarea>
             </label>
 
             <label class="field mode-ask" data-mode="ask">
               <span>问题</span>
-              <textarea id="ask-question" rows="5">ReAct 是如何把推理和工具调用结合起来的？</textarea>
+              <textarea id="ask-question" rows="8">ReAct 是如何把推理和工具调用结合起来的？</textarea>
             </label>
 
             <label class="field mode-compare hidden" data-mode="compare">
@@ -86,122 +87,140 @@
 
             <label class="field mode-compare hidden" data-mode="compare">
               <span>对比重点</span>
-              <textarea id="compare-focus" rows="5">方法、结论和局限性</textarea>
+              <textarea id="compare-focus" rows="6">方法、结论和局限性</textarea>
             </label>
 
             <label class="field mode-review hidden" data-mode="review">
               <span>主题</span>
-              <textarea id="review-topic" rows="5">multi agent software development</textarea>
+              <textarea id="review-topic" rows="6">multi agent software development</textarea>
             </label>
 
             <label class="field mode-evaluate hidden" data-mode="evaluate">
               <span>评测说明</span>
-              <textarea id="evaluate-note" rows="5" readonly>运行内置 demo_eval.json，统计 paper 命中率、关键词命中率、平均回答长度和失败样例。</textarea>
+              <textarea id="evaluate-note" rows="6" readonly>运行内置 demo_eval.json，统计 paper 命中率、关键词命中率、平均回答长度和失败样例。</textarea>
             </label>
 
-            <div class="inline-grid">
-              <label class="field slim">
-                <span>Top K</span>
-                <input id="top-k" type="number" min="1" max="10" value="5" />
-              </label>
-            </div>
-
-            <div class="button-row">
-              <button id="submit-button" class="primary-button" type="submit">运行问答</button>
-              <button id="health-button" class="ghost-button" type="button">健康检查</button>
+            <div class="composer-footer">
+              <div class="composer-meta-row">
+                <label class="toggle-field mode-ask" data-mode="ask">
+                  <input id="strict-grounded" type="checkbox" checked />
+                  <span>严格证据模式</span>
+                </label>
+                <label class="field slim topk-field">
+                  <span>Top K</span>
+                  <input id="top-k" type="number" min="1" max="10" value="5" />
+                </label>
+              </div>
+              <button id="submit-button" class="primary-button composer-submit" type="submit">运行问答</button>
             </div>
           </form>
+        </footer>
 
-          <div class="section-head compact border-top">
-            <div>
-              <p class="section-kicker">第三步</p>
-              <h2>导入文件</h2>
-            </div>
-          </div>
-
-          <form id="upload-form" class="form-stack">
-            <label class="field">
-              <span>支持 PDF / DOCX / TXT</span>
-              <input id="upload-file" type="file" accept=".pdf,.docx,.txt" />
-            </label>
-            <div class="button-row single">
-              <button id="upload-button" class="primary-button" type="submit">导入到知识库</button>
-            </div>
-            <p class="helper-text">导入后会自动刷新索引，后续问答和检索会直接使用新文档。</p>
-          </form>
-
-          <div class="section-head compact border-top">
-            <div>
-              <p class="section-kicker">快捷示例</p>
-              <h2>一键填充</h2>
-            </div>
-          </div>
-
-          <div class="preset-list">
-            <button class="preset-button" type="button" data-preset="ask-react">问：ReAct 做了什么</button>
-            <button class="preset-button" type="button" data-preset="ask-model">问：你是什么模型</button>
-            <button class="preset-button" type="button" data-preset="search-rag">检索：self-rag</button>
-            <button class="preset-button" type="button" data-preset="compare-agent">对比：react toolformer</button>
-            <button class="preset-button" type="button" data-preset="review-agent">综述：multi agent</button>
-            <button class="preset-button" type="button" data-preset="evaluate-demo">跑：内置评测</button>
-          </div>
-        </aside>
-
-        <section class="content">
-          <div class="summary-card card">
-            <div class="section-head">
+        <section class="thread-column">
+          <section class="summary-card card">
+            <div class="section-head compact">
               <div>
-                <p class="section-kicker">结果摘要</p>
+                <p class="section-kicker">Response</p>
                 <h2>当前输出</h2>
               </div>
-              <div id="mode-badge" class="mode-badge">当前模式：问答</div>
             </div>
             <div id="summary-output" class="summary-output">
               <div class="empty-state">
                 <h3>还没有结果</h3>
-                <p>先在左侧选择模式并提交请求。这里会优先展示最值得看的结论。</p>
+                <p>选择模式并发送请求。这里会优先展示当前问题的回答和结论。</p>
               </div>
             </div>
-          </div>
+          </section>
 
-          <div class="detail-grid three-column">
-            <div class="detail-card card">
-              <div class="section-head">
-                <div>
-                  <p class="section-kicker">证据面板</p>
-                  <h2>证据与轨迹</h2>
-                </div>
-              </div>
-              <div id="detail-output" class="detail-output">
-                <p class="empty-note">证据片段、调用轨迹和结构化内容会显示在这里。</p>
+          <section class="detail-card card">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Evidence</p>
+                <h2>证据与轨迹</h2>
               </div>
             </div>
-
-            <div class="detail-card card">
-              <div class="section-head">
-                <div>
-                  <p class="section-kicker">文档管理</p>
-                  <h2>知识库文件</h2>
-                </div>
-                <button id="refresh-documents" class="ghost-button compact-button" type="button">刷新列表</button>
-              </div>
-              <div id="documents-output" class="detail-output">
-                <p class="empty-note">还没有导入文件。</p>
-              </div>
+            <div id="detail-output" class="detail-output">
+              <p class="empty-note">证据片段、调用轨迹和结构化内容会显示在这里。</p>
             </div>
-
-            <div class="detail-card card">
-              <div class="section-head">
-                <div>
-                  <p class="section-kicker">调试视图</p>
-                  <h2>原始 JSON</h2>
-                </div>
-              </div>
-              <pre id="json-output" class="json-output">{}</pre>
-            </div>
-          </div>
+          </section>
         </section>
       </main>
+
+      <aside id="utility-drawer" class="utility-drawer hidden">
+        <div class="utility-shell card">
+          <div class="section-head compact">
+            <div>
+              <p class="section-kicker">Tools</p>
+              <h2 id="utility-title">工具面板</h2>
+            </div>
+            <button id="close-utility" class="ghost-button compact-button" type="button">关闭</button>
+          </div>
+
+          <div class="utility-nav">
+            <button class="utility-nav-button active" data-utility-panel-target="presets" type="button">预设</button>
+            <button class="utility-nav-button" data-utility-panel-target="import" type="button">导入</button>
+            <button class="utility-nav-button" data-utility-panel-target="documents" type="button">文件</button>
+            <button class="utility-nav-button" data-utility-panel-target="json" type="button">JSON</button>
+          </div>
+
+          <section class="utility-panel" data-utility-panel="presets">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Presets</p>
+                <h3>快捷示例</h3>
+              </div>
+            </div>
+            <div class="preset-list">
+              <button class="preset-button" type="button" data-preset="ask-react">问：ReAct 做了什么</button>
+              <button class="preset-button" type="button" data-preset="ask-model">问：你是什么模型</button>
+              <button class="preset-button" type="button" data-preset="search-rag">检索：self-rag</button>
+              <button class="preset-button" type="button" data-preset="compare-agent">对比：react toolformer</button>
+              <button class="preset-button" type="button" data-preset="review-agent">综述：multi agent</button>
+              <button class="preset-button" type="button" data-preset="evaluate-demo">跑：内置评测</button>
+            </div>
+          </section>
+
+          <section class="utility-panel hidden" data-utility-panel="import">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Import</p>
+                <h3>文档导入</h3>
+              </div>
+            </div>
+            <form id="upload-form" class="form-stack">
+              <label class="field">
+                <span>支持 PDF / DOCX / TXT</span>
+                <input id="upload-file" type="file" accept=".pdf,.docx,.txt" />
+              </label>
+              <button id="upload-button" class="primary-button" type="submit">导入到知识库</button>
+              <p class="helper-text">导入后会自动刷新索引，后续问答和检索会直接使用新文档。</p>
+            </form>
+          </section>
+
+          <section class="utility-panel hidden" data-utility-panel="documents">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Library</p>
+                <h3>知识库文件</h3>
+              </div>
+              <button id="refresh-documents" class="ghost-button compact-button" type="button">刷新列表</button>
+            </div>
+            <div id="documents-output" class="detail-output compact-output">
+              <p class="empty-note">还没有导入文件。</p>
+            </div>
+          </section>
+
+          <section class="utility-panel hidden" data-utility-panel="json">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Raw</p>
+                <h3>原始 JSON</h3>
+              </div>
+            </div>
+            <pre id="json-output" class="json-output">{}</pre>
+          </section>
+        </div>
+      </aside>
     </div>
 
     <script src="/static/app.js"></script>

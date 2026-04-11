@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Literal
 
@@ -41,11 +41,32 @@ class ToolTrace(BaseModel):
     output: str
 
 
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class SessionSummary(BaseModel):
+    session_id: str
+    title: str
+    turn_count: int
+    updated_at: str
+    preview: str = ""
+
+
+class SessionDetail(SessionSummary):
+    messages: list[ConversationMessage] = Field(default_factory=list)
+
+
 class AnswerResult(BaseModel):
     question: str
     answer: str
     evidence: list[Evidence]
     trace: list[ToolTrace]
+    insufficient_evidence: bool = False
+    session_id: str = ""
+    session_title: str = ""
+    history: list[ConversationMessage] = Field(default_factory=list)
 
 
 class ComparisonRow(BaseModel):

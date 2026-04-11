@@ -3,6 +3,7 @@
 import argparse
 import json
 
+from .app_service import ResearchApp
 from .agent import ResearchAssistant
 from .evaluation import run_evaluation
 
@@ -19,6 +20,8 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser = subparsers.add_parser("ask")
     ask_parser.add_argument("--question", required=True)
     ask_parser.add_argument("--top-k", type=int, default=5)
+    ask_parser.add_argument("--session-id", default=None)
+    ask_parser.add_argument("--allow-ungrounded", action="store_true")
 
     compare_parser = subparsers.add_parser("compare")
     compare_parser.add_argument("--ids", nargs="*")
@@ -38,11 +41,17 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
     agent = ResearchAssistant(corpus_path=args.corpus)
+    app = ResearchApp(agent=agent)
 
     if args.command == "search":
         payload = agent.search_papers(args.query, top_k=args.top_k)
     elif args.command == "ask":
-        payload = agent.answer_question(args.question, top_k=args.top_k).model_dump()
+        payload = app.ask(
+            args.question,
+            top_k=args.top_k,
+            session_id=args.session_id,
+            strict_grounded=not args.allow_ungrounded,
+        ).model_dump()
     elif args.command == "compare":
         payload = agent.compare_papers(paper_ids=args.ids, query=args.query, focus=args.focus).model_dump()
     elif args.command == "review":

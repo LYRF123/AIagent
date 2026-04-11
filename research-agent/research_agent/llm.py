@@ -3,7 +3,8 @@
 import json
 import os
 from dataclasses import dataclass
-from typing import Any
+from pathlib import Path
+from typing import Any, Iterator
 from urllib import error, request
 
 from langchain_core.embeddings import Embeddings
@@ -16,6 +17,40 @@ DEFAULT_DASHSCOPE_RERANK_URL = "https://dashscope.aliyuncs.com/api/v1/services/r
 DEFAULT_DASHSCOPE_MODEL = "qwen-plus"
 DEFAULT_DASHSCOPE_EMBEDDING_MODEL = "text-embedding-v4"
 DEFAULT_DASHSCOPE_RERANK_MODEL = "gte-rerank-v2"
+_ENV_CACHE: dict[str, str] | None = None
+
+
+def load_dotenv_map() -> dict[str, str]:
+    global _ENV_CACHE
+    if _ENV_CACHE is not None:
+        return _ENV_CACHE
+
+    project_root = Path(__file__).resolve().parent.parent
+    env_path = project_root / ".env"
+    values: dict[str, str] = {}
+    if env_path.exists():
+        for raw_line in env_path.read_text(encoding="utf-8-sig").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                values[key] = value
+    _ENV_CACHE = values
+    return values
+
+
+def resolve_setting(name: str, explicit: str | None = None, default: str | None = None) -> str | None:
+    if explicit:
+        return explicit
+    if os.getenv(name):
+        return os.getenv(name)
+    env_file_values = load_dotenv_map()
+    if env_file_values.get(name):
+        return env_file_values[name]
+    return default
 
 
 @dataclass
@@ -71,12 +106,12 @@ class DashScopeLangChainClient:
         rerank_url: str | None = None,
         timeout: int = 60,
     ) -> None:
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
-        self.base_url = (base_url or os.getenv("DASHSCOPE_BASE_URL") or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
-        self.model = model or os.getenv("DASHSCOPE_MODEL") or DEFAULT_DASHSCOPE_MODEL
-        self.embedding_model = embedding_model or os.getenv("DASHSCOPE_EMBEDDING_MODEL") or DEFAULT_DASHSCOPE_EMBEDDING_MODEL
-        self.rerank_model = rerank_model or os.getenv("DASHSCOPE_RERANK_MODEL") or DEFAULT_DASHSCOPE_RERANK_MODEL
-        self.rerank_url = rerank_url or os.getenv("DASHSCOPE_RERANK_URL") or DEFAULT_DASHSCOPE_RERANK_URL
+        self.api_key = resolve_setting("DASHSCOPE_API_KEY", explicit=api_key)
+        self.base_url = (resolve_setting("DASHSCOPE_BASE_URL", explicit=base_url, default=DEFAULT_DASHSCOPE_BASE_URL) or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
+        self.model = resolve_setting("DASHSCOPE_MODEL", explicit=model, default=DEFAULT_DASHSCOPE_MODEL) or DEFAULT_DASHSCOPE_MODEL
+        self.embedding_model = resolve_setting("DASHSCOPE_EMBEDDING_MODEL", explicit=embedding_model, default=DEFAULT_DASHSCOPE_EMBEDDING_MODEL) or DEFAULT_DASHSCOPE_EMBEDDING_MODEL
+        self.rerank_model = resolve_setting("DASHSCOPE_RERANK_MODEL", explicit=rerank_model, default=DEFAULT_DASHSCOPE_RERANK_MODEL) or DEFAULT_DASHSCOPE_RERANK_MODEL
+        self.rerank_url = resolve_setting("DASHSCOPE_RERANK_URL", explicit=rerank_url, default=DEFAULT_DASHSCOPE_RERANK_URL) or DEFAULT_DASHSCOPE_RERANK_URL
         self.timeout = timeout
         self._chat_model: ChatOpenAI | None = None
         self._embedding_model: DashScopeEmbeddings | None = None
@@ -110,6 +145,16 @@ class DashScopeLangChainClient:
             )
         return self._embedding_model
 
+    def _normalize_content(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "".join(self._normalize_content(item) for item in value)
+        if isinstance(value, dict):
+            text = value.get("text")
+            return str(text) if text else ""
+        return str(value or "")
+
     def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> LLMResponse:
         model = self.chat_model(temperature=temperature)
         response = model.invoke(
@@ -118,10 +163,20 @@ class DashScopeLangChainClient:
                 ("human", user_prompt),
             ]
         )
-        text = getattr(response, "content", "")
-        if isinstance(text, list):
-            text = "\n".join(str(item) for item in text)
-        return LLMResponse(text=str(text).strip(), model=self.model, provider="dashscope")
+        text = self._normalize_content(getattr(response, "content", "")).strip()
+        return LLMResponse(text=text, model=self.model, provider="dashscope")
+
+    def stream_complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> Iterator[str]:
+        model = self.chat_model(temperature=temperature)
+        for chunk in model.stream(
+            [
+                ("system", system_prompt),
+                ("human", user_prompt),
+            ]
+        ):
+            text = self._normalize_content(getattr(chunk, "content", ""))
+            if text:
+                yield text
 
     def rerank(self, query: str, documents: list[str], top_n: int | None = None) -> list[RerankItem]:
         if not self.api_key:
@@ -178,3 +233,4 @@ def build_context_block(evidence: list[dict[str, Any]]) -> str:
             f"[{index}] paper_id={item['paper_id']} title={item['title']} section={item['section']} score={item['score']}\n{item['text']}"
         )
     return "\n\n".join(lines)
+

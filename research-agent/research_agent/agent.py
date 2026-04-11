@@ -1,14 +1,15 @@
 ﻿from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from .corpus import PaperCorpus
 from .file_import import build_imported_paper
 from .hybrid import HybridRetriever
 from .llm import DashScopeLangChainClient, build_context_block
-from .models import AnswerResult, ComparisonResult, ComparisonRow, Evidence, ReviewResult, ToolTrace
+from .models import AnswerResult, ComparisonResult, ComparisonRow, ConversationMessage, Evidence, ReviewResult, ToolTrace
 from .rag import LangChainVectorRAG
-from .retrieval import TfidfRetriever
+from .retrieval import BM25Retriever, QueryExpander, TfidfRetriever
 
 
 SECTION_PRIORITY = {
@@ -18,18 +19,58 @@ SECTION_PRIORITY = {
     "limitations": 3,
     "topics": 4,
 }
+FOLLOW_UP_MARKERS = {
+    "it",
+    "its",
+    "they",
+    "their",
+    "them",
+    "this",
+    "that",
+    "these",
+    "those",
+    "he",
+    "she",
+    "then",
+    "also",
+    "instead",
+    "compare",
+    "相比",
+    "它",
+    "它们",
+    "这个",
+    "这个方法",
+    "这篇",
+    "那篇",
+    "这些",
+    "那些",
+    "进一步",
+    "继续",
+    "然后",
+    "同时",
+    "另外",
+}
 
 
 class ResearchAssistant:
     def __init__(self, corpus_path: str | Path | None = None) -> None:
         self.corpus = PaperCorpus.from_json(corpus_path)
         self.llm = DashScopeLangChainClient()
+        self.managed_upload_dir = Path(__file__).resolve().parent.parent / "uploads"
         self._rebuild_retrievers()
 
     def _rebuild_retrievers(self) -> None:
         self.tfidf_retriever = TfidfRetriever(self.corpus)
+        self.bm25_retriever = BM25Retriever(self.corpus)
+        self.query_expander = QueryExpander(self.corpus)
         self.vector_rag = LangChainVectorRAG(self.corpus, self.llm)
-        self.hybrid_retriever = HybridRetriever(self.tfidf_retriever, self.vector_rag, self.llm)
+        self.hybrid_retriever = HybridRetriever(
+            self.tfidf_retriever,
+            self.bm25_retriever,
+            self.vector_rag,
+            self.llm,
+            self.query_expander,
+        )
 
     def list_imported_documents(self) -> list[dict]:
         return [
@@ -59,20 +100,26 @@ class ResearchAssistant:
         }
 
     def delete_document(self, paper_id: str) -> dict:
-        removed = self.corpus.delete_imported_paper(paper_id, persist=True)
+        removed = next((paper for paper in self.corpus.list_imported_papers() if paper.paper_id == paper_id), None)
         if removed is None:
             raise ValueError("未找到要删除的文档。")
 
         source_path = Path(removed.source_url)
-        if source_path.exists() and source_path.is_file():
+        if self._is_managed_upload(source_path) and source_path.exists() and source_path.is_file():
             source_path.unlink()
 
+        self.corpus.delete_imported_paper(paper_id, persist=True)
         self._rebuild_retrievers()
         return {
             "paper_id": paper_id,
             "title": removed.title,
             "remaining_count": len(self.corpus.list_imported_papers()),
         }
+
+    def _is_managed_upload(self, path: str | Path) -> bool:
+        root = self.managed_upload_dir.resolve(strict=False)
+        resolved = Path(path).resolve(strict=False)
+        return resolved == root or root in resolved.parents
 
     def _is_system_question(self, question: str) -> bool:
         normalized = question.strip().lower()
@@ -87,11 +134,96 @@ class ResearchAssistant:
         ]
         return any(keyword in normalized for keyword in keywords)
 
+    def _prefers_chinese(self, text: str) -> bool:
+        return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+    def _compact_text(self, value: str, limit: int = 180) -> str:
+        compact = " ".join(value.split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
+
+    def _looks_like_follow_up(self, question: str) -> bool:
+        normalized = " ".join(question.lower().split())
+        if not normalized:
+            return False
+        if any(marker in normalized for marker in FOLLOW_UP_MARKERS):
+            return True
+        return len(normalized.split()) <= 8
+
+    def _build_contextual_query(self, question: str, history: list[ConversationMessage], trace: list[ToolTrace]) -> str:
+        if not history:
+            return question
+
+        if not self._looks_like_follow_up(question):
+            trace.append(
+                ToolTrace(
+                    tool="conversation_context",
+                    input=question,
+                    output="standalone_question_no_history_expansion",
+                )
+            )
+            return question
+
+        recent_user_questions = [item.content for item in history if item.role == "user"][-2:]
+        recent_assistant_answers = [item.content for item in history if item.role == "assistant"][-1:]
+        context_parts = [self._compact_text(item, limit=120) for item in recent_user_questions]
+        context_parts.extend(self._compact_text(item, limit=160) for item in recent_assistant_answers)
+        context_parts.append(question.strip())
+        contextual_query = " ".join(part for part in context_parts if part)
+        trace.append(
+            ToolTrace(
+                tool="conversation_context",
+                input=question,
+                output=contextual_query,
+            )
+        )
+        return contextual_query
+
+    def _build_history_block(self, history: list[ConversationMessage], limit: int = 4) -> str:
+        if not history:
+            return ""
+        recent_history = history[-limit:]
+        return "\n".join(
+            f"{item.role.title()}: {self._compact_text(item.content, limit=220)}"
+            for item in recent_history
+        )
+
+    def _build_answer_prompts(self, question: str, evidence: list[Evidence], history: list[ConversationMessage] | None = None) -> tuple[str, str]:
+        context = build_context_block([item.model_dump() for item in evidence])
+        history_block = self._build_history_block(history or [])
+        system_prompt = (
+            "You are a research assistant. Answer only from the provided evidence. "
+            "Be concise and accurate. Reply in the same language as the user's question. "
+            "If the evidence is weak, say so explicitly. Every factual claim must include bracket citations like [1] or [2]."
+        )
+        if history_block:
+            user_prompt = (
+                f"Conversation history:\n{history_block}\n\n"
+                f"Question:\n{question}\n\n"
+                f"Evidence:\n{context}\n\n"
+                "Answer the latest question using the evidence above. Use the history only to resolve references in the latest question."
+            )
+        else:
+            user_prompt = (
+                f"Question:\n{question}\n\n"
+                f"Evidence:\n{context}\n\n"
+                "Write a short answer grounded in the evidence above."
+            )
+        return system_prompt, user_prompt
+
+    def _iter_text_chunks(self, text: str, chunk_size: int = 48) -> Iterator[str]:
+        if not text:
+            return
+        normalized = text.strip()
+        for start in range(0, len(normalized), chunk_size):
+            yield normalized[start : start + chunk_size]
+
     def _system_answer(self, question: str) -> AnswerResult:
         if self.llm.enabled:
             answer = (
                 f"我当前通过阿里 DashScope 的 OpenAI 兼容接口调用 {self.llm.model} 模型回答，"
-                f"检索层使用 Hybrid Retrieval（TF-IDF + LangChain FAISS）+ {self.llm.rerank_model} 重排 + {self.llm.embedding_model} 向量表示。"
+                f"检索层使用 Hybrid Retrieval（TF-IDF + BM25 + LangChain FAISS）+ {self.llm.rerank_model} 重排 + {self.llm.embedding_model} 向量表示。"
             )
             trace = [
                 ToolTrace(
@@ -99,17 +231,17 @@ class ResearchAssistant:
                     input=question,
                     output=(
                         f"provider=dashscope, model={self.llm.model}, "
-                        f"embedding={self.llm.embedding_model}, rerank={self.llm.rerank_model}"
+                        f"retrieval=tfidf+bm25+vector, embedding={self.llm.embedding_model}, rerank={self.llm.rerank_model}"
                     ),
                 )
             ]
         else:
-            answer = "我当前运行的是本地规则版，没有启用 DashScope、混合检索、重排或外部大模型。"
+            answer = "我当前运行的是本地规则版，没有启用 DashScope、外部大模型、向量检索或重排；但本地仍然使用 TF-IDF + BM25 + 查询扩展做检索。"
             trace = [
                 ToolTrace(
                     tool="system_info",
                     input=question,
-                    output="provider=local, model=rule-based, retriever=tfidf",
+                    output="provider=local, model=rule-based, retrieval=tfidf+bm25+query-expansion, vector=disabled, rerank=disabled",
                 )
             ]
         return AnswerResult(question=question, answer=answer, evidence=[], trace=trace)
@@ -161,10 +293,15 @@ class ResearchAssistant:
         return selected
 
     def _rule_based_answer(self, question: str, evidence: list[Evidence], trace: list[ToolTrace]) -> AnswerResult:
+        citation_map = {
+            (item.paper_id, item.section, item.text): index
+            for index, item in enumerate(evidence, start=1)
+        }
         snippets_by_paper: dict[str, list[Evidence]] = {}
         for item in evidence:
             snippets_by_paper.setdefault(item.paper_id, []).append(item)
 
+        prefers_chinese = self._prefers_chinese(question)
         lines = []
         for paper_id, snippets in snippets_by_paper.items():
             ordered = sorted(snippets, key=lambda item: (SECTION_PRIORITY.get(item.section, 99), -item.score))
@@ -174,31 +311,44 @@ class ResearchAssistant:
             paper = self.corpus.get_paper(paper_id)
             primary = non_topic[0].text
             support = non_topic[1].text if len(non_topic) > 1 else None
-            if support:
-                sentence = f"{paper.title} ({paper.year}) indicates that {primary} Supporting detail: {support}"
+            primary_citation = f"[{citation_map[(non_topic[0].paper_id, non_topic[0].section, non_topic[0].text)]}]"
+            if prefers_chinese:
+                if support:
+                    support_citation = f"[{citation_map[(non_topic[1].paper_id, non_topic[1].section, non_topic[1].text)]}]"
+                    sentence = f"{paper.title}（{paper.year}）表明：{primary} {primary_citation} 补充信息：{support} {support_citation}"
+                else:
+                    sentence = f"{paper.title}（{paper.year}）表明：{primary} {primary_citation}"
             else:
-                sentence = f"{paper.title} ({paper.year}) indicates that {primary}"
+                if support:
+                    support_citation = f"[{citation_map[(non_topic[1].paper_id, non_topic[1].section, non_topic[1].text)]}]"
+                    sentence = f"{paper.title} ({paper.year}) indicates that {primary} {primary_citation} Supporting detail: {support} {support_citation}"
+                else:
+                    sentence = f"{paper.title} ({paper.year}) indicates that {primary} {primary_citation}"
             lines.append(sentence)
 
         if not lines and evidence:
             paper = self.corpus.get_paper(evidence[0].paper_id)
-            lines.append(f"{paper.title} ({paper.year}) is the closest match in the local corpus, but only topic-level evidence was found.")
+            if prefers_chinese:
+                lines.append(f"{paper.title}（{paper.year}）是当前语料库中最接近的问题匹配，但目前只找到了主题级证据。")
+            else:
+                lines.append(f"{paper.title} ({paper.year}) is the closest match in the local corpus, but only topic-level evidence was found.")
 
-        answer = " ".join(lines) if lines else "No relevant evidence was found in the local corpus."
+        if lines:
+            answer = " ".join(lines)
+        elif prefers_chinese:
+            answer = "当前本地语料库里没有找到相关证据。"
+        else:
+            answer = "No relevant evidence was found in the local corpus."
         return AnswerResult(question=question, answer=answer, evidence=evidence, trace=trace)
 
-    def _llm_answer(self, question: str, evidence: list[Evidence], trace: list[ToolTrace]) -> AnswerResult:
-        context = build_context_block([item.model_dump() for item in evidence])
-        system_prompt = (
-            "You are a research assistant. Answer only from the provided evidence. "
-            "Be concise and accurate. Reply in the same language as the user's question. "
-            "If the evidence is weak, say so explicitly."
-        )
-        user_prompt = (
-            f"Question:\n{question}\n\n"
-            f"Evidence:\n{context}\n\n"
-            "Write a short answer grounded in the evidence above."
-        )
+    def _llm_answer(
+        self,
+        question: str,
+        evidence: list[Evidence],
+        trace: list[ToolTrace],
+        history: list[ConversationMessage] | None = None,
+    ) -> AnswerResult:
+        system_prompt, user_prompt = self._build_answer_prompts(question, evidence, history)
         llm_response = self.llm.complete(system_prompt=system_prompt, user_prompt=user_prompt)
         trace.append(
             ToolTrace(
@@ -208,6 +358,51 @@ class ResearchAssistant:
             )
         )
         return AnswerResult(question=question, answer=llm_response.text, evidence=evidence, trace=trace)
+
+    def _llm_answer_stream(
+        self,
+        question: str,
+        evidence: list[Evidence],
+        trace: list[ToolTrace],
+        history: list[ConversationMessage] | None = None,
+    ) -> Iterator[str]:
+        system_prompt, user_prompt = self._build_answer_prompts(question, evidence, history)
+        collected: list[str] = []
+        try:
+            for delta in self.llm.stream_complete(system_prompt=system_prompt, user_prompt=user_prompt):
+                if not delta:
+                    continue
+                collected.append(delta)
+                yield delta
+            trace.append(
+                ToolTrace(
+                    tool="langchain_chat_qwen_stream",
+                    input=question,
+                    output=f"provider=dashscope, model={self.llm.model}",
+                )
+            )
+            return
+        except Exception as exc:
+            trace.append(ToolTrace(tool="langchain_chat_stream_error", input=question, output=str(exc)))
+
+        try:
+            llm_response = self.llm.complete(system_prompt=system_prompt, user_prompt=user_prompt)
+            streamed_text = "".join(collected)
+            if llm_response.text.startswith(streamed_text):
+                remainder = llm_response.text[len(streamed_text) :]
+            else:
+                remainder = llm_response.text if not streamed_text else ""
+            if remainder:
+                yield remainder
+            trace.append(
+                ToolTrace(
+                    tool="langchain_chat_qwen",
+                    input=question,
+                    output=f"provider={llm_response.provider}, model={llm_response.model}",
+                )
+            )
+        except Exception as exc:
+            trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
 
     def _llm_general_answer(self, question: str, trace: list[ToolTrace]) -> AnswerResult:
         system_prompt = (
@@ -225,15 +420,41 @@ class ResearchAssistant:
         )
         return AnswerResult(question=question, answer=llm_response.text, evidence=[], trace=trace)
 
-    def answer_question(self, question: str, top_k: int = 5) -> AnswerResult:
+    def _insufficient_evidence_answer(self, question: str, trace: list[ToolTrace]) -> AnswerResult:
+        trace.append(
+            ToolTrace(
+                tool="grounded_answer_guard",
+                input=question,
+                output="blocked_unverified_answer_due_to_missing_evidence",
+            )
+        )
+        return AnswerResult(
+            question=question,
+            answer="当前本地语料库里没有找到足够证据，因此我不能可靠地回答这个问题。" if self._prefers_chinese(question) else "No relevant evidence was found in the local corpus, so I can't answer this reliably.",
+            evidence=[],
+            trace=trace,
+            insufficient_evidence=True,
+        )
+
+    def answer_question(
+        self,
+        question: str,
+        top_k: int = 5,
+        strict_grounded: bool = True,
+        history: list[ConversationMessage] | None = None,
+    ) -> AnswerResult:
         if self._is_system_question(question):
             return self._system_answer(question)
 
+        history = list(history or [])
         trace: list[ToolTrace] = []
-        raw_evidence = self._retrieve_evidence(question, top_k=max(top_k * 3, 6), trace=trace)
+        retrieval_query = self._build_contextual_query(question, history, trace)
+        raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
         evidence = self._rank_evidence_for_answer(raw_evidence, top_k=top_k)
 
         if not evidence:
+            if strict_grounded:
+                return self._insufficient_evidence_answer(question, trace)
             if self.llm.enabled:
                 try:
                     return self._llm_general_answer(question, trace)
@@ -241,18 +462,85 @@ class ResearchAssistant:
                     trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
             return AnswerResult(
                 question=question,
-                answer="No relevant evidence was found in the local corpus.",
+                answer="当前本地语料库里没有找到相关证据。" if self._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
                 evidence=[],
                 trace=trace,
+                insufficient_evidence=True,
             )
 
         if self.llm.enabled:
             try:
-                return self._llm_answer(question, evidence, trace)
+                return self._llm_answer(question, evidence, trace, history=history)
             except Exception as exc:
                 trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
 
         return self._rule_based_answer(question, evidence, trace)
+
+    def answer_question_stream(
+        self,
+        question: str,
+        top_k: int = 5,
+        strict_grounded: bool = True,
+        history: list[ConversationMessage] | None = None,
+    ) -> Iterator[dict]:
+        if self._is_system_question(question):
+            result = self._system_answer(question)
+            for chunk in self._iter_text_chunks(result.answer):
+                yield {"type": "chunk", "delta": chunk}
+            yield {"type": "final", "data": result.model_dump()}
+            return
+
+        history = list(history or [])
+        trace: list[ToolTrace] = []
+        retrieval_query = self._build_contextual_query(question, history, trace)
+        raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
+        evidence = self._rank_evidence_for_answer(raw_evidence, top_k=top_k)
+
+        if not evidence:
+            if strict_grounded:
+                result = self._insufficient_evidence_answer(question, trace)
+            elif self.llm.enabled:
+                try:
+                    result = self._llm_general_answer(question, trace)
+                except Exception as exc:
+                    trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
+                    result = AnswerResult(
+                        question=question,
+                        answer="当前本地语料库里没有找到相关证据。" if self._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
+                        evidence=[],
+                        trace=trace,
+                        insufficient_evidence=True,
+                    )
+            else:
+                result = AnswerResult(
+                    question=question,
+                    answer="当前本地语料库里没有找到相关证据。" if self._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
+                    evidence=[],
+                    trace=trace,
+                    insufficient_evidence=True,
+                )
+            for chunk in self._iter_text_chunks(result.answer):
+                yield {"type": "chunk", "delta": chunk}
+            yield {"type": "final", "data": result.model_dump()}
+            return
+
+        if self.llm.enabled:
+            chunks: list[str] = []
+            for delta in self._llm_answer_stream(question, evidence, trace, history=history):
+                if not delta:
+                    continue
+                chunks.append(delta)
+                yield {"type": "chunk", "delta": delta}
+            streamed_answer = "".join(chunks).strip()
+            if streamed_answer:
+                result = AnswerResult(question=question, answer=streamed_answer, evidence=evidence, trace=trace)
+                yield {"type": "final", "data": result.model_dump()}
+                return
+
+        result = self._rule_based_answer(question, evidence, trace)
+        for chunk in self._iter_text_chunks(result.answer):
+            yield {"type": "chunk", "delta": chunk}
+        yield {"type": "final", "data": result.model_dump()}
 
     def compare_papers(
         self,
