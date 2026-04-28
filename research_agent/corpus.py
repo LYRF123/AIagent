@@ -6,12 +6,56 @@ from pathlib import Path
 from .models import Paper, Passage
 
 
+SUMMARY_CHUNK_CHARS = 900
+SUMMARY_CHUNK_OVERLAP = 120
+GENERIC_TOPIC_TERMS = {
+    "article",
+    "document",
+    "file",
+    "idea",
+    "main",
+    "method",
+    "methods",
+    "paper",
+    "study",
+    "upload",
+    "uploaded",
+}
+
+
 def default_data_path() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "demo_papers.json"
 
 
 def default_imported_data_path() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "imported_papers.json"
+
+
+def split_passage_text(
+    value: str,
+    chunk_size: int = SUMMARY_CHUNK_CHARS,
+    overlap: int = SUMMARY_CHUNK_OVERLAP,
+) -> list[str]:
+    compact = " ".join(value.split())
+    if not compact:
+        return []
+    if len(compact) <= chunk_size:
+        return [compact]
+
+    chunks = []
+    step = max(chunk_size - overlap, 1)
+    for start in range(0, len(compact), step):
+        chunk = compact[start : start + chunk_size].strip()
+        if chunk:
+            chunks.append(chunk)
+        if start + chunk_size >= len(compact):
+            break
+    return chunks
+
+
+def is_informative_topic(value: str) -> bool:
+    normalized = " ".join(value.lower().split())
+    return bool(normalized) and normalized not in GENERIC_TOPIC_TERMS
 
 
 class PaperCorpus:
@@ -27,7 +71,12 @@ class PaperCorpus:
         self._refresh_state()
 
     @classmethod
-    def from_json(cls, path: str | Path | None = None, imported_path: str | Path | None = None) -> "PaperCorpus":
+    def from_json(
+        cls,
+        path: str | Path | None = None,
+        imported_path: str | Path | None = None,
+        include_imported: bool = True,
+    ) -> "PaperCorpus":
         data_path = Path(path) if path else default_data_path()
         with data_path.open("r", encoding="utf-8-sig") as handle:
             raw = json.load(handle)
@@ -35,7 +84,7 @@ class PaperCorpus:
 
         imported_target = Path(imported_path) if imported_path else default_imported_data_path()
         imported_items: list[Paper] = []
-        if imported_target.exists():
+        if include_imported and imported_target.exists():
             with imported_target.open("r", encoding="utf-8-sig") as handle:
                 imported_raw = json.load(handle)
             imported_items = [Paper.model_validate(item) for item in imported_raw]
@@ -51,7 +100,7 @@ class PaperCorpus:
         return self.paper_by_id[paper_id]
 
     def get_papers(self, paper_ids: list[str]) -> list[Paper]:
-        return [self.paper_by_id[paper_id] for paper_id in paper_ids if paper_id in self.paper_by_id]
+        return [self.paper_by_id[paper_id] for paper_id in paper_ids]
 
     def add_imported_paper(self, paper: Paper, persist: bool = True) -> None:
         self.imported_papers = [item for item in self.imported_papers if item.paper_id != paper.paper_id]
@@ -85,15 +134,18 @@ class PaperCorpus:
     def _build_passages(self, papers: list[Paper]) -> list[Passage]:
         passages: list[Passage] = []
         for paper in papers:
-            passages.append(
-                Passage(
-                    passage_id=f"{paper.paper_id}:summary",
-                    paper_id=paper.paper_id,
-                    title=paper.title,
-                    section="summary",
-                    text=paper.summary,
+            summary_chunks = split_passage_text(paper.summary)
+            for index, chunk in enumerate(summary_chunks):
+                passage_id = f"{paper.paper_id}:summary" if len(summary_chunks) == 1 else f"{paper.paper_id}:summary:{index}"
+                passages.append(
+                    Passage(
+                        passage_id=passage_id,
+                        paper_id=paper.paper_id,
+                        title=paper.title,
+                        section="summary",
+                        text=chunk,
+                    )
                 )
-            )
             for section_name, values in (
                 ("methods", paper.methods),
                 ("findings", paper.findings),
@@ -101,6 +153,8 @@ class PaperCorpus:
                 ("topics", paper.topics),
             ):
                 for index, value in enumerate(values):
+                    if section_name == "topics" and not is_informative_topic(value):
+                        continue
                     passages.append(
                         Passage(
                             passage_id=f"{paper.paper_id}:{section_name}:{index}",
