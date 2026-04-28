@@ -8,6 +8,7 @@ from typing import Any
 from .app_service import ResearchApp
 from .agent import ResearchAssistant
 from .evaluation import run_evaluation
+from .logging_config import logger
 
 
 def emit_json(payload: Any) -> None:
@@ -18,7 +19,7 @@ def emit_json(payload: Any) -> None:
         buffer.write(b"\n")
         buffer.flush()
         return
-    print(text)
+    logger.info(text)
 
 
 def build_parser() -> argparse.ArgumentParser:

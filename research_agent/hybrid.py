@@ -1,9 +1,9 @@
 ﻿from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 
 from .llm import DashScopeLangChainClient
+from .logging_config import logger
 from .models import Evidence
 from .rag import LangChainVectorRAG
 from .retrieval import BM25Retriever, QueryExpander, TfidfRetriever
@@ -192,7 +192,7 @@ class HybridRetriever:
                 )
                 return HybridResult(evidence=reranked, trace=trace)
         except Exception as exc:
-            warnings.warn(f"Rerank failed, falling back to fusion rank: {exc}", RuntimeWarning, stacklevel=2)
+            logger.warning(f"Rerank failed, falling back to fusion rank: {exc}")
             trace.append(
                 {
                     "tool": "dashscope_rerank_error",
