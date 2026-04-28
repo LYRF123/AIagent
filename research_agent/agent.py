@@ -66,13 +66,14 @@ class ResearchAssistant:
         )
         self.llm = DashScopeLangChainClient()
         self.managed_upload_dir = Path(__file__).resolve().parent.parent / "uploads"
+        self._data_dir = Path(__file__).resolve().parent.parent / "data"
         self._rebuild_retrievers()
 
     def _rebuild_retrievers(self) -> None:
         self.tfidf_retriever = TfidfRetriever(self.corpus)
         self.bm25_retriever = BM25Retriever(self.corpus)
         self.query_expander = QueryExpander(self.corpus)
-        self.vector_rag = LangChainVectorRAG(self.corpus, self.llm)
+        self.vector_rag = LangChainVectorRAG(self.corpus, self.llm, persist_dir=self._data_dir)
         self.hybrid_retriever = HybridRetriever(
             self.tfidf_retriever,
             self.bm25_retriever,
@@ -97,7 +98,21 @@ class ResearchAssistant:
     def import_document(self, path: str | Path, original_name: str | None = None) -> dict:
         paper = build_imported_paper(path, original_name=original_name)
         self.corpus.add_imported_paper(paper, persist=True)
-        self._rebuild_retrievers()
+        # Rebuild non-vector retrievers (they need full corpus rebuilds)
+        self.tfidf_retriever = TfidfRetriever(self.corpus)
+        self.bm25_retriever = BM25Retriever(self.corpus)
+        self.query_expander = QueryExpander(self.corpus)
+        # Add just the new document to the vector store incrementally
+        new_docs = self.vector_rag.build_documents_for_paper(paper.paper_id)
+        self.vector_rag.add_documents(new_docs)
+        # Rebuild hybrid retriever to pick up updated retrievers
+        self.hybrid_retriever = HybridRetriever(
+            self.tfidf_retriever,
+            self.bm25_retriever,
+            self.vector_rag,
+            self.llm,
+            self.query_expander,
+        )
         return {
             "paper_id": paper.paper_id,
             "title": paper.title,
