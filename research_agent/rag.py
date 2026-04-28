@@ -4,7 +4,6 @@ from threading import Lock
 
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .corpus import PaperCorpus
 from .llm import DashScopeLangChainClient
@@ -40,12 +39,7 @@ class LangChainVectorRAG:
                     },
                 )
             )
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=420,
-            chunk_overlap=60,
-            separators=["\n\n", "\n", ". ", " ", ""],
-        )
-        return splitter.split_documents(docs)
+        return docs
 
     def _ensure_vectorstore(self) -> FAISS:
         if self._vectorstore is not None:

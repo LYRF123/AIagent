@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
-from dataclasses import dataclass
+import warnings
+from dataclasses import dataclass, field
 
 from .llm import DashScopeLangChainClient
 from .models import Evidence
@@ -12,6 +13,7 @@ from .retrieval import BM25Retriever, QueryExpander, TfidfRetriever
 class HybridResult:
     evidence: list[Evidence]
     trace: list[dict[str, str]]
+    rerank_failed: bool = field(default=False)
 
 
 class HybridRetriever:
@@ -190,6 +192,7 @@ class HybridRetriever:
                 )
                 return HybridResult(evidence=reranked, trace=trace)
         except Exception as exc:
+            warnings.warn(f"Rerank failed, falling back to fusion rank: {exc}", RuntimeWarning, stacklevel=2)
             trace.append(
                 {
                     "tool": "dashscope_rerank_error",
@@ -197,6 +200,7 @@ class HybridRetriever:
                     "output": str(exc),
                 }
             )
+            return HybridResult(evidence=merged[:top_k], trace=trace, rerank_failed=True)
 
         return HybridResult(evidence=merged[:top_k], trace=trace)
 
