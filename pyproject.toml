@@ -2,19 +2,27 @@
 name = "research-agent"
 version = "0.3.0"
 description = "Research assistant agent with LangChain, FAISS, DashScope Qwen, and local document import"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
   "faiss-cpu",
   "langchain-community",
   "langchain-openai",
-  "langchain-text-splitters",
   "numpy",
   "openai",
   "pydantic",
   "pypdf",
   "pytest",
   "python-docx",
+  "ragas",
   "scikit-learn"
+]
+
+[project.scripts]
+research-agent = "research_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = [
+  "research_agent*"
 ]
 
 [tool.pytest.ini_options]

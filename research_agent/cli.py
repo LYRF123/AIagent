@@ -2,10 +2,23 @@
 
 import argparse
 import json
+import sys
+from typing import Any
 
 from .app_service import ResearchApp
 from .agent import ResearchAssistant
 from .evaluation import run_evaluation
+
+
+def emit_json(payload: Any) -> None:
+    text = json.dumps(payload, indent=2, ensure_ascii=False)
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is not None:
+        buffer.write(text.encode("utf-8"))
+        buffer.write(b"\n")
+        buffer.flush()
+        return
+    print(text)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,13 +47,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     eval_parser = subparsers.add_parser("eval")
     eval_parser.add_argument("--eval-path", default=None)
+    eval_parser.add_argument("--top-k", type=int, default=5)
+    eval_parser.add_argument("--ragas", action="store_true", help="Run optional Ragas LLM-as-judge metrics")
+    eval_parser.add_argument("--include-imported", action="store_true", help="Include locally imported documents during evaluation")
     return parser
 
 
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    agent = ResearchAssistant(corpus_path=args.corpus)
+    if args.command == "eval":
+        include_imported = args.include_imported
+    else:
+        include_imported = True
+    agent = ResearchAssistant(corpus_path=args.corpus, include_imported=include_imported)
     app = ResearchApp(agent=agent)
 
     if args.command == "search":
@@ -57,9 +77,9 @@ def main() -> None:
     elif args.command == "review":
         payload = agent.generate_review(args.topic, top_k=args.top_k).model_dump()
     else:
-        payload = run_evaluation(agent, eval_path=args.eval_path)
+        payload = run_evaluation(agent, eval_path=args.eval_path, top_k=args.top_k, use_ragas=args.ragas)
 
-    print(json.dumps(payload, indent=2, ensure_ascii=False))
+    emit_json(payload)
 
 
 if __name__ == "__main__":
