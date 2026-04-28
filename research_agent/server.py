@@ -5,6 +5,8 @@ from email.parser import BytesParser
 import json
 import mimetypes
 import os
+import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -83,10 +85,33 @@ def import_saved_document(saved_path: Path, original_name: str, app: ResearchApp
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def _json_response(self, payload: dict | list, status: int = HTTPStatus.OK) -> None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.close_connection = True
-        self.send_response(status)
+    # --- rate limiting ---
+    _rate_limits: dict[str, list[float]] = {}
+    _rate_lock = threading.Lock()
+
+    def _check_rate_limit(self) -> bool:
+        """Return True if the request is allowed, False if rate-limited (429 sent)."""
+        now = time.time()
+        ip = self.client_address[0]
+        with Handler._rate_lock:
+            timestamps = Handler._rate_limits.get(ip)
+            if timestamps is None:
+                timestamps = []
+                Handler._rate_limits[ip] = timestamps
+            # Purge entries older than 60 seconds
+            timestamps[:] = [t for t in timestamps if now - t <= 60.0]
+            if len(timestamps) >= 30:
+                return False
+            timestamps.append(now)
+        return True
+
+    def _send_rate_limit_response(self) -> None:
+        body = json.dumps(
+            {"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(HTTPStatus.TOO_MANY_REQUESTS)
+        self._send_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Connection", "close")
@@ -127,6 +152,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_OPTIONS(self) -> None:
+        if not self._check_rate_limit():
+            self._send_rate_limit_response()
+            return
         self.send_response(HTTPStatus.NO_CONTENT)
         self._send_cors_headers()
         self.send_header("Content-Length", "0")
@@ -174,6 +202,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:
+        if not self._check_rate_limit():
+            self._send_rate_limit_response()
+            return
         parsed = urlparse(self.path)
         route = unquote(parsed.path)
         app = get_app()
@@ -205,6 +236,9 @@ class Handler(BaseHTTPRequestHandler):
         self._json_response({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
+        if not self._check_rate_limit():
+            self._send_rate_limit_response()
+            return
         if self.path == "/ask-stream":
             self._handle_ask_stream()
             return
