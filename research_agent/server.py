@@ -10,12 +10,12 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
 from .app_service import ResearchApp
 from .agent import ResearchAssistant
-from .evaluation import run_evaluation
+from .evaluation import default_eval_path, run_evaluation
 
 
 CORPUS_PATH = os.getenv("RESEARCH_AGENT_CORPUS")
@@ -293,16 +293,33 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == "/review":
                 payload = self._read_json()
                 result = app.agent.generate_review(payload["topic"], top_k=int(payload.get("top_k", 5))).model_dump()
-            elif self.path == "/evaluate":
-                if not EVAL_PATH:
-                    self._json_response({"error": "evaluation not configured"}, status=HTTPStatus.NOT_FOUND)
-                    return
-                payload = self._read_json()
+            elif self.path == "/evaluate" or self.path.startswith("/evaluate?"):
+                parsed = urlparse(self.path)
+                qs = parse_qs(parsed.query)
+                top_k = int(qs.get("top_k", [5])[0])
+                use_ragas = qs.get("ragas", ["false"])[0].lower() in ("true", "1", "yes")
+                include_imported = qs.get("include_imported", ["false"])[0].lower() in ("true", "1", "yes")
+
+                eval_path = EVAL_PATH if EVAL_PATH else None
+                if eval_path is not None:
+                    if not Path(eval_path).exists():
+                        self._json_response({"error": "evaluation not configured"}, status=HTTPStatus.NOT_FOUND)
+                        return
+                else:
+                    if not default_eval_path().exists():
+                        self._json_response({"error": "evaluation not configured"}, status=HTTPStatus.NOT_FOUND)
+                        return
+
+                if include_imported:
+                    eval_agent = ResearchAssistant(corpus_path=CORPUS_PATH, include_imported=True)
+                else:
+                    eval_agent = app.agent
+
                 result = run_evaluation(
-                    app.agent,
-                    eval_path=EVAL_PATH,
-                    top_k=int(payload.get("top_k", 5)),
-                    use_ragas=bool(payload.get("use_ragas", False)),
+                    eval_agent,
+                    eval_path=eval_path,
+                    top_k=top_k,
+                    use_ragas=use_ragas,
                 )
             else:
                 self._json_response({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
