@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 from urllib import error, request
+from urllib.parse import urlparse
 
 from langchain_core.embeddings import Embeddings
 from langchain_openai import ChatOpenAI
@@ -67,6 +68,16 @@ class RerankItem:
     document: str
 
 
+_ALLOWED_RERANK_HOSTS = {"dashscope.aliyuncs.com"}
+
+
+def _validate_rerank_url(url: str) -> None:
+    parsed = urlparse(url)
+    host = parsed.hostname or ""
+    if host not in _ALLOWED_RERANK_HOSTS:
+        raise ValueError(f"Rerank URL host '{host}' is not in the allowed list: {_ALLOWED_RERANK_HOSTS}")
+
+
 class DashScopeEmbeddings(Embeddings):
     def __init__(
         self,
@@ -113,7 +124,7 @@ class DashScopeLangChainClient:
         self.rerank_model = resolve_setting("DASHSCOPE_RERANK_MODEL", explicit=rerank_model, default=DEFAULT_DASHSCOPE_RERANK_MODEL) or DEFAULT_DASHSCOPE_RERANK_MODEL
         self.rerank_url = resolve_setting("DASHSCOPE_RERANK_URL", explicit=rerank_url, default=DEFAULT_DASHSCOPE_RERANK_URL) or DEFAULT_DASHSCOPE_RERANK_URL
         self.timeout = timeout
-        self._chat_model: ChatOpenAI | None = None
+        self._chat_models: dict[float, ChatOpenAI] = {}
         self._embedding_model: DashScopeEmbeddings | None = None
 
     @property
@@ -123,8 +134,8 @@ class DashScopeLangChainClient:
     def chat_model(self, temperature: float = 0.2) -> ChatOpenAI:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
-        if self._chat_model is None:
-            self._chat_model = ChatOpenAI(
+        if temperature not in self._chat_models:
+            self._chat_models[temperature] = ChatOpenAI(
                 model_name=self.model,
                 openai_api_key=self.api_key,
                 openai_api_base=self.base_url,
@@ -132,7 +143,7 @@ class DashScopeLangChainClient:
                 max_retries=2,
                 request_timeout=self.timeout,
             )
-        return self._chat_model
+        return self._chat_models[temperature]
 
     def embedding_client(self) -> DashScopeEmbeddings:
         if not self.api_key:
@@ -181,6 +192,7 @@ class DashScopeLangChainClient:
     def rerank(self, query: str, documents: list[str], top_n: int | None = None) -> list[RerankItem]:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        _validate_rerank_url(self.rerank_url)
         if not documents:
             return []
         payload = {
