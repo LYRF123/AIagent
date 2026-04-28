@@ -1,7 +1,32 @@
-﻿.claude/
+﻿# Research Agent - gitignore
+
+.claude/
 .env
 .env.*
 __pycache__/
 .pytest_cache/
 *.pyc
 data/sessions.json
+
+# Data files that may contain user content
+data/imported_papers.json
+data/literature_papers.json
+data/literature_eval.json
+data/*.faiss
+data/*.pkl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
