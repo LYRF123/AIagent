@@ -53,8 +53,17 @@ FOLLOW_UP_MARKERS = {
 
 
 class ResearchAssistant:
-    def __init__(self, corpus_path: str | Path | None = None) -> None:
-        self.corpus = PaperCorpus.from_json(corpus_path)
+    def __init__(
+        self,
+        corpus_path: str | Path | None = None,
+        imported_path: str | Path | None = None,
+        include_imported: bool = True,
+    ) -> None:
+        self.corpus = PaperCorpus.from_json(
+            corpus_path,
+            imported_path=imported_path,
+            include_imported=include_imported,
+        )
         self.llm = DashScopeLangChainClient()
         self.managed_upload_dir = Path(__file__).resolve().parent.parent / "uploads"
         self._rebuild_retrievers()
@@ -147,9 +156,7 @@ class ResearchAssistant:
         normalized = " ".join(question.lower().split())
         if not normalized:
             return False
-        if any(marker in normalized for marker in FOLLOW_UP_MARKERS):
-            return True
-        return len(normalized.split()) <= 8
+        return any(marker in normalized for marker in FOLLOW_UP_MARKERS)
 
     def _build_contextual_query(self, question: str, history: list[ConversationMessage], trace: list[ToolTrace]) -> str:
         if not history:
