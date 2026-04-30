@@ -200,3 +200,13 @@ export function applyPreset(name) {
   }
   closeUtilityDrawer();
 }
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    const submitBtn = document.getElementById("submit-button");
+    if (submitBtn && !submitBtn.disabled) {
+      submitBtn.click();
+    }
+  }
+});

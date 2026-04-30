@@ -25,8 +25,7 @@ export function renderTextWithCitationChips(value, evidenceCount = 0) {
     html += escapeHtml(text.slice(lastIndex, offset));
     const isMatched = Number(number) >= 1 && Number(number) <= evidenceCount;
     const classes = `citation-chip${isMatched ? "" : " citation-chip-unmatched"}`;
-    const label = isMatched ? `\u8DF3\u8F6C\u5230\u8BC1\u636E ${number}` : `\u672A\u5339\u914D\u5230\u8BC1\u636E ${number}`;
-    html += `<button class="${classes}" type="button" data-citation-target="${escapeHtml(number)}" aria-label="${escapeHtml(label)}">[${escapeHtml(number)}]</button>`;
+    html += `<button class="${classes}" type="button" data-citation-target="${escapeHtml(number)}" aria-label="Citation ${escapeHtml(number)}">[${escapeHtml(number)}]</button>`;
     lastIndex = offset + match.length;
     return match;
   });
@@ -261,8 +260,7 @@ export function renderClaimEvidenceRefs(refs, evidenceCount) {
       ${refs.map((number) => {
         const isMatched = Number(number) >= 1 && Number(number) <= evidenceCount;
         const classes = `citation-chip${isMatched ? "" : " citation-chip-unmatched"}`;
-        const label = isMatched ? `\u8DF3\u8F6C\u5230\u8BC1\u636E ${number}` : `\u672A\u5339\u914D\u5230\u8BC1\u636E ${number}`;
-        return `<button class="${classes}" type="button" data-citation-target="${escapeHtml(number)}" aria-label="${escapeHtml(label)}">[${escapeHtml(number)}]</button>`;
+        return `<button class="${classes}" type="button" data-citation-target="${escapeHtml(number)}" aria-label="Citation ${escapeHtml(number)}">[${escapeHtml(number)}]</button>`;
       }).join("")}
     </div>
   `;
