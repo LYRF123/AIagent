@@ -17,7 +17,7 @@ import {
 } from "./escape.js";
 import { setStatus } from "./common.js";
 
-export function renderTextWithCitationChips(value, evidenceCount = 0) {
+export function renderTextWithCitationChips(value, evidenceCount = 0, evidence = []) {
   const text = formatFieldValue(value);
   let html = "";
   let lastIndex = 0;
@@ -25,7 +25,9 @@ export function renderTextWithCitationChips(value, evidenceCount = 0) {
     html += escapeHtml(text.slice(lastIndex, offset));
     const isMatched = Number(number) >= 1 && Number(number) <= evidenceCount;
     const classes = `citation-chip${isMatched ? "" : " citation-chip-unmatched"}`;
-    html += `<button class="${classes}" type="button" data-citation-target="${escapeHtml(number)}" aria-label="Citation ${escapeHtml(number)}">[${escapeHtml(number)}]</button>`;
+    const evidenceItem = Number(number) >= 1 && Number(number) <= evidence.length ? evidence[Number(number) - 1] : null;
+    const titleAttr = evidenceItem ? ` title="${escapeHtml(truncateText(evidenceItem.text || '', 160))}"` : "";
+    html += `<button class="${classes}" type="button" data-citation-target="${escapeHtml(number)}"${titleAttr} aria-label="Citation ${escapeHtml(number)}">[${escapeHtml(number)}]</button>`;
     lastIndex = offset + match.length;
     return match;
   });
@@ -97,7 +99,7 @@ export function renderTrace(trace) {
   return `<div class="detail-block"><h4>\u8C03\u7528\u8F68\u8FF9</h4>${rows}</div>`;
 }
 
-export function renderEvidence(evidence) {
+export function renderEvidence(evidence, citedByMap = {}) {
   if (!evidence || evidence.length === 0) {
     return `<div class="detail-block"><h4>\u8BC1\u636E\u7247\u6BB5</h4><p class="block-note">\u5F53\u524D\u7ED3\u679C\u6CA1\u6709\u8FD4\u56DE\u8BC1\u636E\u3002</p></div>`;
   }
@@ -107,6 +109,7 @@ export function renderEvidence(evidence) {
     const section = firstPresent(item.section, item.section_label);
     const sectionLabel = formatFieldValue(section);
     const score = formatScoreValue(firstPresent(item.score, item.relevance_score, item.similarity));
+    const citedByCount = citedByMap[evidenceNumber] || 0;
     return `
     <article class="evidence-item" id="evidence-${escapeHtml(evidenceNumber)}" data-evidence-number="${escapeHtml(evidenceNumber)}" tabindex="-1">
       <header>
@@ -118,10 +121,20 @@ export function renderEvidence(evidence) {
           </div>
         </div>
         ${score ? `<div class="score-badge">\u5206\u6570 ${escapeHtml(score)}</div>` : ""}
+        ${citedByCount > 0 ? `<div class="cited-by-badge" data-cited-by="${citedByCount}">\u88AB ${citedByCount} \u6761 claim \u5F15\u7528</div>` : ""}
       </header>
       ${hasValue(section) ? `<div class="evidence-section">${escapeHtml(sectionLabels[sectionLabel] || sectionLabel)}</div>` : ""}
       ${renderEvidenceMeta(item, { includePaperId: false })}
-      <p class="evidence-text">${escapeHtml(getItemText(item))}</p>
+      ${(() => {
+        const fullText = getItemText(item);
+        if (fullText.length <= 200) {
+          return `<p class="evidence-text">${escapeHtml(fullText)}</p>`;
+        }
+        return `<div class="evidence-text-wrap">
+          <p class="evidence-text evidence-text-collapsed">${escapeHtml(fullText)}</p>
+          <button class="evidence-expand-btn ghost-button compact-button" type="button" data-expanded="false">展开全文</button>
+        </div>`;
+      })()}
     </article>
   `;
   }).join("");
@@ -306,6 +319,77 @@ export function renderClaimAudit(claimAudit, evidenceCount = 0, options = {}) {
           `;
         }).join("")}
       </div>
+    </div>
+  `;
+}
+
+export function renderDiagnosticsPanel(diagnostics) {
+  if (!diagnostics || !diagnostics.pipeline_stages || diagnostics.pipeline_stages.length === 0) {
+    return "";
+  }
+  const stages = diagnostics.pipeline_stages;
+  const totalMs = diagnostics.latency_ms != null ? Number(diagnostics.latency_ms) : 0;
+  const maxLatency = Math.max(...stages.map((s) => Number(s.latency_ms) || 0), 1);
+
+  const stageRows = stages.map((stage, idx) => {
+    const name = escapeHtml(formatFieldValue(stage.name || `stage_${idx}`));
+    const status = stage.status || "unknown";
+    const statusClass = status === "completed" ? "success" : status === "failed" ? "error" : status === "skipped" ? "idle" : "loading";
+    const latencyMs = Number(stage.latency_ms) || 0;
+    const widthPct = Math.max((latencyMs / maxLatency) * 100, 4);
+    const latencyLabel = stage.latency_ms != null ? `${latencyMs.toFixed(0)}ms` : "";
+    const hitCount = Array.isArray(stage.top) ? stage.top.length : 0;
+    return `
+      <div class="pipeline-row">
+        <div class="pipeline-row-label">
+          <span class="pipeline-step-num">${idx + 1}</span>
+          <strong>${name}</strong>
+          <span class="status-pill ${statusClass}" style="min-height:auto;padding:2px 6px;font-size:11px">${escapeHtml(status)}</span>
+        </div>
+        <div class="pipeline-bar-track">
+          <div class="pipeline-bar pipeline-bar-${statusClass}" style="width:${widthPct.toFixed(1)}%">
+            ${latencyLabel ? `<span class="pipeline-bar-label">${escapeHtml(latencyLabel)}</span>` : ""}
+          </div>
+        </div>
+        ${hitCount > 0 ? `<span class="pipeline-hits">${hitCount} hits</span>` : ""}
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <div class="detail-block">
+      <details>
+        <summary style="cursor:pointer;user-select:none">
+          <h4 style="display:inline">\u68C0\u7D22\u7BA1\u7EBF${totalMs ? ` (${totalMs.toFixed(0)}ms)` : ""}</h4>
+        </summary>
+        <div class="pipeline-waterfall" style="margin-top:8px">
+          ${stageRows}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+export function renderContradictions(contradictions) {
+  if (!Array.isArray(contradictions) || contradictions.length === 0) {
+    return "";
+  }
+  const rows = contradictions.map((c) => {
+    const severityClass = c.severity === "major" ? "danger" : c.severity === "minor" ? "neutral" : "warning";
+    return `
+      <div class="contradiction-warning">
+        <div class="contradiction-head">
+          <span class="failure-tag ${severityClass}">${escapeHtml(c.severity || "moderate")}</span>
+          <span class="block-note">证据 <button class="citation-chip" type="button" data-citation-target="${escapeHtml(String(c.evidence_a))}" aria-label="Citation ${escapeHtml(String(c.evidence_a))}">[${escapeHtml(String(c.evidence_a))}]</button> vs <button class="citation-chip" type="button" data-citation-target="${escapeHtml(String(c.evidence_b))}" aria-label="Citation ${escapeHtml(String(c.evidence_b))}">[${escapeHtml(String(c.evidence_b))}]</button></span>
+        </div>
+        <p>${escapeHtml(c.description || "")}</p>
+      </div>
+    `;
+  }).join("");
+  return `
+    <div class="detail-block">
+      <h4>矛盾检测 (${contradictions.length})</h4>
+      <div style="display:grid;gap:6px">${rows}</div>
     </div>
   `;
 }

@@ -92,6 +92,35 @@ detailOutput.addEventListener("click", (event) => {
   focusEvidenceCard(chip.dataset.citationTarget);
 });
 
+detailOutput.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const chip = target?.closest(".contradiction-warning .citation-chip");
+  if (!chip) {
+    return;
+  }
+  focusEvidenceCard(chip.dataset.citationTarget);
+});
+
+detailOutput.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const btn = target?.closest(".evidence-expand-btn");
+  if (!btn) {
+    return;
+  }
+  const wrap = btn.closest(".evidence-text-wrap");
+  if (!wrap) {
+    return;
+  }
+  const textEl = wrap.querySelector(".evidence-text");
+  if (!textEl) {
+    return;
+  }
+  const isExpanded = btn.dataset.expanded === "true";
+  textEl.classList.toggle("evidence-text-collapsed", isExpanded);
+  btn.dataset.expanded = String(!isExpanded);
+  btn.textContent = isExpanded ? "展开全文" : "收起";
+});
+
 detailOutput.addEventListener("focusin", (event) => {
   const target = event.target instanceof Element ? event.target : null;
   const chip = target?.closest(".claim-audit-block .citation-chip");
@@ -138,14 +167,54 @@ if (sessionSidebarToggle) {
 }
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") {
+  if (event.key === "Escape") {
+    if (!utilityDrawer.classList.contains("hidden")) {
+      closeUtilityDrawer();
+    }
+    if (compactSessionSidebarQuery.matches && appShell?.classList.contains("session-sidebar-open")) {
+      setSessionSidebarOpen(false);
+    }
     return;
   }
-  if (!utilityDrawer.classList.contains("hidden")) {
-    closeUtilityDrawer();
+
+  // Alt+key shortcuts — skip when focus is in a text input
+  if (!event.altKey) {
+    return;
   }
-  if (compactSessionSidebarQuery.matches && appShell?.classList.contains("session-sidebar-open")) {
-    setSessionSidebarOpen(false);
+  const tag = document.activeElement?.tagName;
+  if (tag === "TEXTAREA" || (tag === "INPUT" && document.activeElement.type !== "checkbox")) {
+    return;
+  }
+
+  if (event.key === "1") {
+    event.preventDefault();
+    showMode("ask");
+    return;
+  }
+  if (event.key === "2") {
+    event.preventDefault();
+    showMode("rag_lab");
+    return;
+  }
+  if (event.key === "t" || event.key === "T") {
+    event.preventDefault();
+    if (utilityDrawer.classList.contains("hidden")) {
+      openUtilityDrawer(getCurrentUtility() || "presets");
+    } else {
+      closeUtilityDrawer();
+    }
+    return;
+  }
+  if (event.key === "n" || event.key === "N") {
+    event.preventDefault();
+    createSession();
+    return;
+  }
+  if (event.key === "s" || event.key === "S") {
+    event.preventDefault();
+    const nextIsOpen = !appShell?.classList.contains("session-sidebar-open");
+    setSessionSidebarOpen(nextIsOpen);
+    return;
   }
 });
 
@@ -247,6 +316,26 @@ if (newSessionButton) {
   });
 }
 
+const shortcutHelpButton = document.getElementById("shortcut-help");
+if (shortcutHelpButton) {
+  shortcutHelpButton.addEventListener("click", () => {
+    summaryOutput.innerHTML = `
+      <div class="summary-block primary">
+        <h3>快捷键</h3>
+        <div class="shortcut-list">
+          <p><kbd>Ctrl+Enter</kbd> 提交当前表单</p>
+          <p><kbd>Escape</kbd> 关闭抽屉/侧栏</p>
+          <p><kbd>Alt+1</kbd> 切换到 Ask 模式</p>
+          <p><kbd>Alt+2</kbd> 切换到 RAG Lab 模式</p>
+          <p><kbd>Alt+T</kbd> 打开/关闭工具抽屉</p>
+          <p><kbd>Alt+N</kbd> 新建会话</p>
+          <p><kbd>Alt+S</kbd> 切换侧栏</p>
+        </div>
+      </div>
+    `;
+  });
+}
+
 healthButton.addEventListener("click", async () => {
   setStatus("\u6B63\u5728\u68C0\u67E5\u670D\u52A1...", "loading");
   try {
@@ -289,3 +378,59 @@ showUtilityPanel(getCurrentUtility());
 closeUtilityDrawer();
 refreshDocuments();
 refreshSessions();
+
+// D3: Touch swipe gestures for mobile drawer/sidebar
+(function initTouchGestures() {
+  const SWIPE_THRESHOLD = 80;
+
+  function addSwipeListener(el, direction, callback) {
+    if (!el) return;
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+
+    el.addEventListener("touchstart", (e) => {
+      const touch = e.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      tracking = true;
+    }, { passive: true });
+
+    el.addEventListener("touchmove", (e) => {
+      if (!tracking) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      // Ignore if vertical scroll is dominant
+      if (Math.abs(dy) > Math.abs(dx)) {
+        tracking = false;
+      }
+    }, { passive: true });
+
+    el.addEventListener("touchend", (e) => {
+      if (!tracking) return;
+      tracking = false;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - startX;
+      if (direction === "right" && dx > SWIPE_THRESHOLD) {
+        callback();
+      }
+      if (direction === "left" && dx < -SWIPE_THRESHOLD) {
+        callback();
+      }
+    }, { passive: true });
+  }
+
+  // Swipe right on utility drawer to close it
+  addSwipeListener(utilityDrawer, "right", () => {
+    closeUtilityDrawer();
+  });
+
+  // Swipe left on session sidebar to close it
+  const sidebarEl = document.getElementById("session-sidebar");
+  addSwipeListener(sidebarEl, "left", () => {
+    if (compactSessionSidebarQuery.matches) {
+      setSessionSidebarOpen(false);
+    }
+  });
+})();
