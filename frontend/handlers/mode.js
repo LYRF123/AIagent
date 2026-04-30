@@ -185,6 +185,24 @@ export function applyPreset(name) {
     closeUtilityDrawer();
     return;
   }
+  if (name === "ask-compare") {
+    showMode("ask");
+    document.getElementById("ask-question").value = "比较 ReAct 和 Toolformer 的方法论差异，各自的优势和局限性是什么？";
+    closeUtilityDrawer();
+    return;
+  }
+  if (name === "ask-greeting") {
+    showMode("ask");
+    document.getElementById("ask-question").value = "你好";
+    closeUtilityDrawer();
+    return;
+  }
+  if (name === "ask-meta") {
+    showMode("ask");
+    document.getElementById("ask-question").value = "你能做什么？你支持哪些功能？";
+    closeUtilityDrawer();
+    return;
+  }
   showMode("rag_lab");
   if (topKInput) {
     topKInput.value = "5";
