@@ -5,13 +5,25 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class SourceSegment(BaseModel):
+    text: str
+    source_url: str = ""
+    source_label: str = ""
+    page: int | None = None
+    locator: str = ""
+
+
 class Paper(BaseModel):
     paper_id: str
     title: str
     year: int
     venue: str
     authors: list[str]
-    source_url: str
+    source_url: str = ""
+    source_label: str = ""
+    page: int | None = None
+    locator: str = ""
+    source_passages: list[SourceSegment] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
     summary: str
     methods: list[str] = Field(default_factory=list)
@@ -25,6 +37,10 @@ class Passage(BaseModel):
     title: str
     section: Literal["summary", "methods", "findings", "limitations", "topics"]
     text: str
+    source_url: str = ""
+    source_label: str = ""
+    page: int | None = None
+    locator: str = ""
 
 
 class Evidence(BaseModel):
@@ -33,6 +49,20 @@ class Evidence(BaseModel):
     section: str
     text: str
     score: float
+    source_url: str = ""
+    source_label: str = ""
+    page: int | None = None
+    locator: str = ""
+
+
+class ClaimAudit(BaseModel):
+    claim_id: str
+    claim: str
+    status: Literal["supported", "weak", "unsupported", "citation_mismatch"]
+    evidence_numbers: list[int] = Field(default_factory=list)
+    supporting_quotes: list[str] = Field(default_factory=list)
+    matched_terms: list[str] = Field(default_factory=list)
+    reason: str = ""
 
 
 class ToolTrace(BaseModel):
@@ -63,7 +93,10 @@ class AnswerResult(BaseModel):
     answer: str
     evidence: list[Evidence]
     trace: list[ToolTrace]
+    claim_audit: list[ClaimAudit] = Field(default_factory=list)
     insufficient_evidence: bool = False
+    question_type: str = "research"
+    retrieval_confidence: float = 0.0
     session_id: str = ""
     session_title: str = ""
     history: list[ConversationMessage] = Field(default_factory=list)
@@ -100,3 +133,6 @@ class EvalCase(BaseModel):
     question: str
     expected_paper_ids: list[str]
     expected_keywords: list[str] = Field(default_factory=list)
+    reference: str = ""
+    tags: list[str] = Field(default_factory=list)
+    difficulty: str = ""

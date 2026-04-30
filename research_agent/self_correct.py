@@ -1,7 +1,15 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from .models import Evidence, ToolTrace
+
+
+class CRAGDecision(Enum):
+    ACCEPT = "accept"
+    RETRY = "retry"
+    DECLINE = "decline"
+
 
 HIGH_SCORE_THRESHOLD = 0.7
 
@@ -318,3 +326,50 @@ def self_correct_retrieval(
             )
 
     return best_evidence
+
+
+def crag_evaluate(
+    query: str,
+    evidence: list[Evidence],
+    llm_client,
+    trace: list[ToolTrace],
+    accept_threshold: float = 0.6,
+    retry_threshold: float = 0.2,
+) -> tuple[CRAGDecision, float]:
+    """
+    Evaluate evidence quality and return a CRAG decision.
+
+    Returns (decision, confidence_score).
+    - ACCEPT: evidence is good enough (avg >= accept_threshold)
+    - RETRY: evidence is marginal (retry_threshold <= avg < accept_threshold)
+    - DECLINE: evidence is too poor (avg < retry_threshold)
+    """
+    if not evidence:
+        trace.append(
+            ToolTrace(
+                tool="crag_evaluate",
+                input=query,
+                output="no_evidence -> DECLINE, confidence=0.0",
+            )
+        )
+        return CRAGDecision.DECLINE, 0.0
+
+    evaluator = EvidenceEvaluator(llm_client)
+    eval_result = evaluator.evaluate(query, evidence, trace)
+    avg = eval_result["average"]
+
+    if avg >= accept_threshold:
+        decision = CRAGDecision.ACCEPT
+    elif avg >= retry_threshold:
+        decision = CRAGDecision.RETRY
+    else:
+        decision = CRAGDecision.DECLINE
+
+    trace.append(
+        ToolTrace(
+            tool="crag_evaluate",
+            input=query,
+            output=f"decision={decision.value}, confidence={avg:.3f}, thresholds=accept:{accept_threshold}/retry:{retry_threshold}",
+        )
+    )
+    return decision, round(avg, 4)

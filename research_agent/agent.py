@@ -168,8 +168,14 @@ class ResearchAssistant:
 
         ag = self.answer_generator
 
-        if ag._is_system_question(question):
+        question_type = ag.classify_question(question)
+        if question_type == "system":
             result = ag._system_answer(question)
+            result.question_type = question_type
+        elif question_type == "meta":
+            result = ag._meta_answer(question)
+        elif question_type == "greeting":
+            result = ag._greeting_answer(question)
         else:
             history = list(history or [])
             trace: list[ToolTrace] = []
@@ -194,6 +200,28 @@ class ResearchAssistant:
             else:
                 raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
             evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k)
+
+            # ---- CRAG decision on final evidence ----
+            crag_decision = None
+            retrieval_confidence = 0.0
+            if evidence and self_correct and self.llm.enabled:
+                from .self_correct import crag_evaluate, CRAGDecision  # fmt: skip
+
+                crag_decision, retrieval_confidence = crag_evaluate(
+                    query=retrieval_query,
+                    evidence=evidence,
+                    llm_client=self.llm,
+                    trace=trace,
+                )
+                if crag_decision == CRAGDecision.DECLINE:
+                    result = ag._insufficient_evidence_answer(question, trace)
+                    result.retrieval_confidence = retrieval_confidence
+                    result.question_type = "research"
+                    self._query_cache[cache_key] = result
+                    if len(self._query_cache) > self.QUERY_CACHE_SIZE:
+                        oldest_key = next(iter(self._query_cache))
+                        del self._query_cache[oldest_key]
+                    return result
 
             if not evidence:
                 if strict_grounded:
@@ -227,6 +255,10 @@ class ResearchAssistant:
             else:
                 result = ag._rule_based_answer(question, evidence, trace, self.corpus.get_paper)
 
+            if crag_decision is not None:
+                result.retrieval_confidence = retrieval_confidence
+
+        result.question_type = "research"
         self._query_cache[cache_key] = result
         if len(self._query_cache) > self.QUERY_CACHE_SIZE:
             oldest_key = next(iter(self._query_cache))
@@ -243,8 +275,15 @@ class ResearchAssistant:
     ) -> Iterator[dict]:
         ag = self.answer_generator
 
-        if ag._is_system_question(question):
-            result = ag._system_answer(question)
+        question_type = ag.classify_question(question)
+        if question_type != "research":
+            if question_type == "system":
+                result = ag._system_answer(question)
+                result.question_type = question_type
+            elif question_type == "meta":
+                result = ag._meta_answer(question)
+            else:
+                result = ag._greeting_answer(question)
             for chunk in ag._iter_text_chunks(result.answer):
                 yield {"type": "chunk", "delta": chunk}
             yield {"type": "final", "data": result.model_dump()}
@@ -273,6 +312,25 @@ class ResearchAssistant:
         else:
             raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
         evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k)
+
+        # ---- CRAG decision on final evidence ----
+        if evidence and self_correct and self.llm.enabled:
+            from .self_correct import crag_evaluate, CRAGDecision  # fmt: skip
+
+            crag_decision, retrieval_confidence = crag_evaluate(
+                query=retrieval_query,
+                evidence=evidence,
+                llm_client=self.llm,
+                trace=trace,
+            )
+            if crag_decision == CRAGDecision.DECLINE:
+                result = ag._insufficient_evidence_answer(question, trace)
+                result.retrieval_confidence = retrieval_confidence
+                result.question_type = "research"
+                for chunk in ag._iter_text_chunks(result.answer):
+                    yield {"type": "chunk", "delta": chunk}
+                yield {"type": "final", "data": result.model_dump()}
+                return
 
         if not evidence:
             if strict_grounded:
