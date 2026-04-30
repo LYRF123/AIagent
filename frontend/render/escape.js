@@ -199,3 +199,52 @@ export function formatSignedScore(value) {
 export function normalizeStageKey(value) {
   return formatFieldValue(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
+
+export function renderSimpleMarkdown(text, evidenceCount = 0, evidence = []) {
+  if (!hasValue(text)) {
+    return "";
+  }
+  let html = escapeHtml(String(text));
+
+  // Bold: **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+
+  // Inline code: `code`
+  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+  // Paragraphs: split on double newline
+  const blocks = html.split(/\n{2,}/);
+  html = blocks
+    .map((block) => {
+      const trimmed = block.trim();
+      if (!trimmed) return "";
+      // List block: consecutive lines starting with "- "
+      const lines = trimmed.split("\n");
+      const isListBlock = lines.every((l) => l.trimStart().startsWith("- ") || l.trim() === "");
+      if (isListBlock) {
+        const items = lines
+          .filter((l) => l.trimStart().startsWith("- "))
+          .map((l) => `<li>${l.trimStart().slice(2)}</li>`)
+          .join("");
+        return `<ul class="md-list">${items}</ul>`;
+      }
+      // Regular paragraph
+      return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+    })
+    .filter(Boolean)
+    .join("");
+
+  // Citation chips: [N] → clickable buttons (same as renderTextWithCitationChips)
+  html = html.replace(/\[(\d+)\]/g, (match, number) => {
+    const num = Number(number);
+    const isMatched = num >= 1 && num <= evidenceCount;
+    const classes = `citation-chip${isMatched ? "" : " citation-chip-unmatched"}`;
+    const evidenceItem = num >= 1 && num <= evidence.length ? evidence[num - 1] : null;
+    const titleAttr = evidenceItem
+      ? ` title="${escapeHtml(truncateText(evidenceItem.text || "", 160))}"`
+      : "";
+    return `<button class="${classes}" type="button" data-citation-target="${escapeHtml(String(number))}"${titleAttr} aria-label="Citation ${escapeHtml(String(number))}">[${escapeHtml(String(number))}]</button>`;
+  });
+
+  return html;
+}
