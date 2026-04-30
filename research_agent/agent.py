@@ -67,9 +67,11 @@ class ResearchAssistant:
         self._query_cache.clear()
         paper = build_imported_paper(path, original_name=original_name)
         self.corpus.add_imported_paper(paper, persist=True)
-        # Rebuild non-vector retrievers (they need full corpus rebuilds)
-        self.tfidf_retriever = TfidfRetriever(self.corpus)
-        self.bm25_retriever = BM25Retriever(self.corpus)
+        # Incrementally update retrievers with new passages
+        new_passages = [p for p in self.corpus.passages if p.paper_id == paper.paper_id]
+        self.tfidf_retriever.add_passages(new_passages)
+        self.bm25_retriever.add_passages(new_passages)
+        # QueryExpander still needs full rebuild (uses paper topics)
         self.query_expander = QueryExpander(self.corpus)
         # Add just the new document to the vector store incrementally
         new_docs = self.vector_rag.build_documents_for_paper(paper.paper_id)

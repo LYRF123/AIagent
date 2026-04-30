@@ -33,6 +33,21 @@ def tokenize_text(value: str) -> list[str]:
     return TOKEN_PATTERN.findall(value.lower())
 
 
+def evidence_from_hit(hit: SearchHit) -> Evidence:
+    passage = hit.passage
+    return Evidence(
+        paper_id=passage.paper_id,
+        title=passage.title,
+        section=passage.section,
+        text=passage.text,
+        score=round(hit.score, 4),
+        source_url=passage.source_url,
+        source_label=passage.source_label,
+        page=passage.page,
+        locator=passage.locator,
+    )
+
+
 class QueryExpander:
     def __init__(self, corpus: PaperCorpus) -> None:
         self.topic_phrases = sorted(
@@ -105,16 +120,20 @@ class TfidfRetriever:
         return hits
 
     def search_evidence(self, query: str, top_k: int = 5) -> list[Evidence]:
-        return [
-            Evidence(
-                paper_id=hit.passage.paper_id,
-                title=hit.passage.title,
-                section=hit.passage.section,
-                text=hit.passage.text,
-                score=round(hit.score, 4),
-            )
-            for hit in self.search(query, top_k=top_k)
+        return [evidence_from_hit(hit) for hit in self.search(query, top_k=top_k)]
+
+    def add_passages(self, passages: list[Passage]) -> None:
+        """Incrementally add new passages without full rebuild."""
+        new_texts = [
+            f"{passage.title} {passage.section} {passage.text}"
+            for passage in passages
         ]
+        if not new_texts:
+            return
+        new_matrix = self.vectorizer.transform(new_texts)
+        import scipy.sparse
+        self.matrix = scipy.sparse.vstack([self.matrix, new_matrix])
+        self.texts.extend(new_texts)
 
 
 class BM25Retriever:
@@ -172,13 +191,22 @@ class BM25Retriever:
         return [SearchHit(passage=item.passage, score=float(item.score / max_score)) for item in ranked]
 
     def search_evidence(self, query: str, top_k: int = 5) -> list[Evidence]:
-        return [
-            Evidence(
-                paper_id=hit.passage.paper_id,
-                title=hit.passage.title,
-                section=hit.passage.section,
-                text=hit.passage.text,
-                score=round(hit.score, 4),
-            )
-            for hit in self.search(query, top_k=top_k)
-        ]
+        return [evidence_from_hit(hit) for hit in self.search(query, top_k=top_k)]
+
+    def add_passages(self, passages: list[Passage]) -> None:
+        """Incrementally add new passages without full rebuild."""
+        for passage in passages:
+            doc = tokenize_text(f"{passage.title} {passage.section} {passage.text}")
+            self.documents.append(doc)
+            doc_len = max(len(doc), 1)
+            self.doc_lengths.append(doc_len)
+
+            frequencies: dict[str, int] = {}
+            for token in doc:
+                frequencies[token] = frequencies.get(token, 0) + 1
+            self.term_frequencies.append(frequencies)
+            for token in frequencies:
+                self.document_frequencies[token] = self.document_frequencies.get(token, 0) + 1
+
+            total = max(len(self.documents), 1)
+            self.avg_doc_length = sum(self.doc_lengths) / total
