@@ -100,9 +100,9 @@ export const ragFlightStageLabels = {
 
 const DRAFT_KEY = "research-agent-draft";
 
-export function saveDraft() {
+export function saveDraft(formData) {
   try {
-    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(_currentMode));
+    window.localStorage.setItem(DRAFT_KEY, JSON.stringify(formData));
   } catch {
     // ignore
   }
@@ -118,4 +118,12 @@ export function loadDraft() {
     // ignore
   }
   return null;
+}
+
+export function clearDraft() {
+  try {
+    window.localStorage.removeItem(DRAFT_KEY);
+  } catch {
+    // ignore
+  }
 }

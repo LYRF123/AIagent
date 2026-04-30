@@ -1,6 +1,5 @@
 import { documentsOutput } from "../state.js";
 import { escapeHtml } from "./escape.js";
-import { deleteDocument } from "../api.js";
 
 export function renderDocuments(items) {
   if (!items || items.length === 0) {
@@ -21,17 +20,4 @@ export function renderDocuments(items) {
       <p>${escapeHtml(item.summary_preview || "")}</p>
     </div>
   `).join("");
-
-  document.querySelectorAll(".delete-document").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const paperId = button.dataset.paperId;
-      if (!paperId) {
-        return;
-      }
-      if (!window.confirm("\u786E\u8BA4\u5220\u9664\u8FD9\u4EFD\u6587\u6863\u5417\uFF1F\u5220\u9664\u540E\u4F1A\u540C\u6B65\u5237\u65B0\u77E5\u8BC6\u5E93\u7D22\u5F15\u3002")) {
-        return;
-      }
-      await deleteDocument(paperId);
-    });
-  });
 }
