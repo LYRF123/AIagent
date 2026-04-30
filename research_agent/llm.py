@@ -69,6 +69,11 @@ class RerankItem:
 
 
 _ALLOWED_RERANK_HOSTS = {"dashscope.aliyuncs.com"}
+_DISABLED_VALUES = {"", "0", "false", "none", "off", "disabled"}
+
+
+def _is_enabled_setting(value: str | None) -> bool:
+    return (value or "").strip().lower() not in _DISABLED_VALUES
 
 
 def _validate_rerank_url(url: str) -> None:
@@ -131,6 +136,25 @@ class DashScopeLangChainClient:
     def enabled(self) -> bool:
         return bool(self.api_key)
 
+    @property
+    def embedding_enabled(self) -> bool:
+        return bool(self.api_key) and _is_enabled_setting(self.embedding_model)
+
+    @property
+    def rerank_enabled(self) -> bool:
+        return bool(self.api_key) and _is_enabled_setting(self.rerank_model)
+
+    @property
+    def _openai_client(self) -> OpenAI:
+        """Lazy OpenAI-compatible client for streaming."""
+        if not hasattr(self, '_openai_client_cache'):
+            self._openai_client_cache = OpenAI(
+                api_key=self.api_key,
+                base_url=self.base_url,
+                timeout=self.timeout,
+            )
+        return self._openai_client_cache
+
     def chat_model(self, temperature: float = 0.2) -> ChatOpenAI:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
@@ -148,6 +172,8 @@ class DashScopeLangChainClient:
     def embedding_client(self) -> DashScopeEmbeddings:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        if not self.embedding_enabled:
+            raise RuntimeError("DashScope embeddings are disabled")
         if self._embedding_model is None:
             self._embedding_model = DashScopeEmbeddings(
                 api_key=self.api_key,
@@ -167,31 +193,70 @@ class DashScopeLangChainClient:
         return str(value or "")
 
     def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> LLMResponse:
-        model = self.chat_model(temperature=temperature)
-        response = model.invoke(
-            [
-                ("system", system_prompt),
-                ("human", user_prompt),
-            ]
+        if not self.api_key:
+            raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+        }
+        req = request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 ResearchAgent/1.0",
+            },
+            method="POST",
         )
-        text = self._normalize_content(getattr(response, "content", "")).strip()
+        try:
+            with request.urlopen(req, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Chat completion HTTP {exc.code}: {detail}") from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"Chat completion connection failed: {exc.reason}") from exc
+        choices = data.get("choices") or []
+        message = (choices[0] or {}).get("message") if choices else {}
+        text = self._normalize_content((message or {}).get("content", "")).strip()
         return LLMResponse(text=text, model=self.model, provider="dashscope")
 
     def stream_complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> Iterator[str]:
-        model = self.chat_model(temperature=temperature)
-        for chunk in model.stream(
-            [
-                ("system", system_prompt),
-                ("human", user_prompt),
-            ]
-        ):
-            text = self._normalize_content(getattr(chunk, "content", ""))
-            if text:
-                yield text
+        """True SSE streaming via DashScope OpenAI-compatible API."""
+        if not self.api_key:
+            raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        try:
+            response = self._openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                stream=True,
+            )
+            for chunk in response:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    yield delta.content
+                # Check for finish_reason stop sentinel
+                if chunk.choices[0].finish_reason is not None:
+                    break
+        except Exception as exc:
+            raise RuntimeError(f"Stream completion failed: {exc}") from exc
 
     def rerank(self, query: str, documents: list[str], top_n: int | None = None) -> list[RerankItem]:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        if not self.rerank_enabled:
+            raise RuntimeError("DashScope rerank is disabled")
         _validate_rerank_url(self.rerank_url)
         if not documents:
             return []
