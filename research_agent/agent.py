@@ -16,6 +16,8 @@ from .review import generate_review as _generate_review_func
 
 
 class ResearchAssistant:
+    QUERY_CACHE_SIZE = 64
+
     def __init__(
         self,
         corpus_path: str | Path | None = None,
@@ -32,6 +34,7 @@ class ResearchAssistant:
         self._data_dir = Path(__file__).resolve().parent.parent / "data"
         self.answer_generator = AnswerGenerator(self.llm)
         self._rebuild_retrievers()
+        self._query_cache: dict[tuple, AnswerResult] = {}
 
     def _rebuild_retrievers(self) -> None:
         self.tfidf_retriever = TfidfRetriever(self.corpus)
@@ -53,6 +56,7 @@ class ResearchAssistant:
                 "title": paper.title,
                 "year": paper.year,
                 "source_url": paper.source_url,
+                "source_label": paper.source_label,
                 "file_name": Path(paper.source_url).name,
                 "summary_preview": paper.summary[:240],
             }
@@ -60,6 +64,7 @@ class ResearchAssistant:
         ]
 
     def import_document(self, path: str | Path, original_name: str | None = None) -> dict:
+        self._query_cache.clear()
         paper = build_imported_paper(path, original_name=original_name)
         self.corpus.add_imported_paper(paper, persist=True)
         # Rebuild non-vector retrievers (they need full corpus rebuilds)
@@ -77,17 +82,20 @@ class ResearchAssistant:
             self.llm,
             self.query_expander,
         )
+        self.vector_rag.flush()
         return {
             "paper_id": paper.paper_id,
             "title": paper.title,
             "year": paper.year,
             "source_url": paper.source_url,
+            "source_label": paper.source_label,
             "file_name": Path(paper.source_url).name,
             "summary_preview": paper.summary[:360],
             "imported_count": len(self.corpus.list_imported_papers()),
         }
 
     def delete_document(self, paper_id: str) -> dict:
+        self._query_cache.clear()
         removed = next((paper for paper in self.corpus.list_imported_papers() if paper.paper_id == paper_id), None)
         if removed is None:
             raise ValueError("未找到要删除的文档。")
@@ -110,7 +118,7 @@ class ResearchAssistant:
         return resolved == root or root in resolved.parents
 
     def _retrieve_evidence(self, query: str, top_k: int, trace: list[ToolTrace]) -> list[Evidence]:
-        result = self.hybrid_retriever.search(query, top_k=max(top_k, 5), candidate_k=max(top_k * 3, 12))
+        result = self.hybrid_retriever.search(query, top_k=max(top_k, 5), candidate_k=max(top_k * 4, 20))
         trace.extend(ToolTrace(**item) for item in result.trace)
         return result.evidence
 
@@ -150,41 +158,78 @@ class ResearchAssistant:
         top_k: int = 5,
         strict_grounded: bool = True,
         history: list[ConversationMessage] | None = None,
+        self_correct: bool = True,
     ) -> AnswerResult:
+        cache_key = (question, top_k, strict_grounded, self_correct, tuple((msg.role, msg.content) for msg in (history or [])))
+        if cache_key in self._query_cache:
+            return self._query_cache[cache_key]
+
         ag = self.answer_generator
 
         if ag._is_system_question(question):
-            return ag._system_answer(question)
+            result = ag._system_answer(question)
+        else:
+            history = list(history or [])
+            trace: list[ToolTrace] = []
+            retrieval_query = ag._build_contextual_query(question, history, trace)
 
-        history = list(history or [])
-        trace: list[ToolTrace] = []
-        retrieval_query = ag._build_contextual_query(question, history, trace)
-        raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
-        evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k)
+            # ---- self-correcting retrieval loop ----
+            if self_correct and self.llm.enabled:
+                from .self_correct import self_correct_retrieval  # fmt: skip
 
-        if not evidence:
-            if strict_grounded:
-                return ag._insufficient_evidence_answer(question, trace)
-            if self.llm.enabled:
+                def _retrieve_for_self_correct(q: str, k: int) -> list[Evidence]:
+                    return self._retrieve_evidence(q, top_k=k, trace=trace)
+
+                raw_evidence = self_correct_retrieval(
+                    query=retrieval_query,
+                    retrieval_fn=_retrieve_for_self_correct,
+                    llm_client=self.llm,
+                    top_k=max(top_k * 3, 6),
+                    max_rounds=3,
+                    threshold=0.4,
+                    trace=trace,
+                )
+            else:
+                raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
+            evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k)
+
+            if not evidence:
+                if strict_grounded:
+                    result = ag._insufficient_evidence_answer(question, trace)
+                elif self.llm.enabled:
+                    try:
+                        result = self._llm_general_answer(question, trace)
+                    except Exception as exc:
+                        trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
+                        result = AnswerResult(
+                            question=question,
+                            answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
+                            evidence=[],
+                            trace=trace,
+                            insufficient_evidence=True,
+                        )
+                else:
+                    result = AnswerResult(
+                        question=question,
+                        answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
+                        evidence=[],
+                        trace=trace,
+                        insufficient_evidence=True,
+                    )
+            elif self.llm.enabled:
                 try:
-                    return self._llm_general_answer(question, trace)
+                    result = ag._llm_answer(question, evidence, trace, history=history)
                 except Exception as exc:
                     trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
-            return AnswerResult(
-                question=question,
-                answer="当前本地语料库里没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
-                evidence=[],
-                trace=trace,
-                insufficient_evidence=True,
-            )
+                    result = ag._rule_based_answer(question, evidence, trace, self.corpus.get_paper)
+            else:
+                result = ag._rule_based_answer(question, evidence, trace, self.corpus.get_paper)
 
-        if self.llm.enabled:
-            try:
-                return ag._llm_answer(question, evidence, trace, history=history)
-            except Exception as exc:
-                trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
-
-        return ag._rule_based_answer(question, evidence, trace, self.corpus.get_paper)
+        self._query_cache[cache_key] = result
+        if len(self._query_cache) > self.QUERY_CACHE_SIZE:
+            oldest_key = next(iter(self._query_cache))
+            del self._query_cache[oldest_key]
+        return result
 
     def answer_question_stream(
         self,
@@ -192,6 +237,7 @@ class ResearchAssistant:
         top_k: int = 5,
         strict_grounded: bool = True,
         history: list[ConversationMessage] | None = None,
+        self_correct: bool = True,
     ) -> Iterator[dict]:
         ag = self.answer_generator
 
@@ -205,7 +251,25 @@ class ResearchAssistant:
         history = list(history or [])
         trace: list[ToolTrace] = []
         retrieval_query = ag._build_contextual_query(question, history, trace)
-        raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
+
+        # ---- self-correcting retrieval loop ----
+        if self_correct and self.llm.enabled:
+            from .self_correct import self_correct_retrieval  # fmt: skip
+
+            def _retrieve_for_self_correct(q: str, k: int) -> list[Evidence]:
+                return self._retrieve_evidence(q, top_k=k, trace=trace)
+
+            raw_evidence = self_correct_retrieval(
+                query=retrieval_query,
+                retrieval_fn=_retrieve_for_self_correct,
+                llm_client=self.llm,
+                top_k=max(top_k * 3, 6),
+                max_rounds=3,
+                threshold=0.4,
+                trace=trace,
+            )
+        else:
+            raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace)
         evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k)
 
         if not evidence:
@@ -218,7 +282,7 @@ class ResearchAssistant:
                     trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
                     result = AnswerResult(
                         question=question,
-                        answer="当前本地语料库里没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
+                        answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
                         evidence=[],
                         trace=trace,
                         insufficient_evidence=True,
@@ -226,7 +290,7 @@ class ResearchAssistant:
             else:
                 result = AnswerResult(
                     question=question,
-                    answer="当前本地语料库里没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
+                    answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
                     evidence=[],
                     trace=trace,
                     insufficient_evidence=True,
@@ -245,7 +309,7 @@ class ResearchAssistant:
                 yield {"type": "chunk", "delta": delta}
             streamed_answer = "".join(chunks).strip()
             if streamed_answer:
-                result = AnswerResult(question=question, answer=streamed_answer, evidence=evidence, trace=trace)
+                result = ag._with_claim_audit(AnswerResult(question=question, answer=streamed_answer, evidence=evidence, trace=trace))
                 yield {"type": "final", "data": result.model_dump()}
                 return
 

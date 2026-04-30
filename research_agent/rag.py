@@ -9,7 +9,12 @@ from langchain_core.documents import Document
 
 from .corpus import PaperCorpus
 from .llm import DashScopeLangChainClient
-from .models import Evidence
+from .models import Evidence, Passage
+
+
+INDEX_METADATA_VERSION = 2
+
+BATCH_SAVE_THRESHOLD = 5
 
 
 class LangChainVectorRAG:
@@ -25,6 +30,7 @@ class LangChainVectorRAG:
         self._lock = Lock()
         self.persist_dir = Path(persist_dir) if persist_dir else None
         self._loaded_from_disk = False
+        self._pending_saves = 0
 
         if self.persist_dir:
             self.index_dir = self.persist_dir / "faiss_index"
@@ -50,34 +56,56 @@ class LangChainVectorRAG:
 
     @property
     def enabled(self) -> bool:
-        return self.llm_client.enabled
+        return self.llm_client.embedding_enabled
 
     def reset(self) -> None:
         with self._lock:
             self._vectorstore = None
             self._loaded_from_disk = False
 
+    def _document_for_passage(self, passage: Passage) -> Document:
+        metadata = {
+            "paper_id": passage.paper_id,
+            "title": passage.title,
+            "section": passage.section,
+            "raw_text": passage.text,
+            "source_url": passage.source_url,
+            "source_label": passage.source_label,
+            "page": passage.page,
+            "locator": passage.locator,
+        }
+        return Document(
+            page_content=f"Title: {passage.title}\nSection: {passage.section}\nText: {passage.text}",
+            metadata=metadata,
+        )
+
+    def _evidence_from_document(self, document: Document, score: float) -> Evidence:
+        page_value = document.metadata.get("page")
+        try:
+            page = int(page_value) if page_value not in (None, "") else None
+        except (TypeError, ValueError):
+            page = None
+        return Evidence(
+            paper_id=str(document.metadata.get("paper_id", "")),
+            title=str(document.metadata.get("title", "")),
+            section=str(document.metadata.get("section", "chunk")),
+            text=str(document.metadata.get("raw_text") or document.page_content),
+            score=round(float(score), 4),
+            source_url=str(document.metadata.get("source_url", "")),
+            source_label=str(document.metadata.get("source_label", "")),
+            page=page,
+            locator=str(document.metadata.get("locator", "")),
+        )
+
     def _build_documents(self) -> list[Document]:
-        docs = []
-        for passage in self.corpus.passages:
-            docs.append(
-                Document(
-                    page_content=f"Title: {passage.title}\nSection: {passage.section}\nText: {passage.text}",
-                    metadata={
-                        "paper_id": passage.paper_id,
-                        "title": passage.title,
-                        "section": passage.section,
-                        "raw_text": passage.text,
-                    },
-                )
-            )
-        return docs
+        return [self._document_for_passage(passage) for passage in self.corpus.passages]
 
     def _save_metadata(self) -> None:
         if not self.persist_dir:
             return
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         meta = {
+            "schema_version": INDEX_METADATA_VERSION,
             "num_documents": len(self._build_documents()),
             "doc_ids": [p.paper_id for p in self.corpus.papers],
         }
@@ -92,7 +120,11 @@ class LangChainVectorRAG:
                 meta = json.load(f)
             saved_ids = set(meta.get("doc_ids", []))
             current_ids = {p.paper_id for p in self.corpus.papers}
-            return saved_ids != current_ids
+            return (
+                meta.get("schema_version") != INDEX_METADATA_VERSION
+                or saved_ids != current_ids
+                or int(meta.get("num_documents", -1)) != len(self.corpus.passages)
+            )
         except Exception:
             return True
 
@@ -126,21 +158,11 @@ class LangChainVectorRAG:
             return self._vectorstore
 
     def build_documents_for_paper(self, paper_id: str) -> list[Document]:
-        docs = []
-        for passage in self.corpus.passages:
-            if passage.paper_id == paper_id:
-                docs.append(
-                    Document(
-                        page_content=f"Title: {passage.title}\nSection: {passage.section}\nText: {passage.text}",
-                        metadata={
-                            "paper_id": passage.paper_id,
-                            "title": passage.title,
-                            "section": passage.section,
-                            "raw_text": passage.text,
-                        },
-                    )
-                )
-        return docs
+        return [
+            self._document_for_passage(passage)
+            for passage in self.corpus.passages
+            if passage.paper_id == paper_id
+        ]
 
     def add_documents(self, documents: list[Document]) -> None:
         if not self.enabled:
@@ -151,9 +173,25 @@ class LangChainVectorRAG:
             return
         with self._lock:
             self._vectorstore.add_documents(documents)
-            if self.persist_dir and self.index_dir:
-                self._vectorstore.save_local(str(self.index_dir))
-                self._save_metadata()
+            self._pending_saves += 1
+            if self._pending_saves >= BATCH_SAVE_THRESHOLD:
+                if self.persist_dir and self.index_dir:
+                    self._vectorstore.save_local(str(self.index_dir))
+                    self._save_metadata()
+                self._pending_saves = 0
+
+    def flush(self) -> None:
+        """Force save index to disk regardless of batch threshold."""
+        if not self.enabled or self._vectorstore is None:
+            return
+        if not self.persist_dir or not self.index_dir:
+            return
+        with self._lock:
+            if self._vectorstore is None:
+                return
+            self._vectorstore.save_local(str(self.index_dir))
+            self._save_metadata()
+            self._pending_saves = 0
 
     def search_evidence(self, query: str, top_k: int = 5) -> list[Evidence]:
         vectorstore = self._ensure_vectorstore()
@@ -161,28 +199,12 @@ class LangChainVectorRAG:
             hits = vectorstore.similarity_search_with_relevance_scores(query, k=top_k)
             evidence = []
             for document, score in hits:
-                evidence.append(
-                    Evidence(
-                        paper_id=str(document.metadata.get("paper_id", "")),
-                        title=str(document.metadata.get("title", "")),
-                        section=str(document.metadata.get("section", "chunk")),
-                        text=str(document.metadata.get("raw_text") or document.page_content),
-                        score=round(float(score), 4),
-                    )
-                )
+                evidence.append(self._evidence_from_document(document, float(score)))
             return evidence
         except Exception:
             hits = vectorstore.similarity_search_with_score(query, k=top_k)
             evidence = []
             for document, distance in hits:
                 score = 1.0 / (1.0 + float(distance))
-                evidence.append(
-                    Evidence(
-                        paper_id=str(document.metadata.get("paper_id", "")),
-                        title=str(document.metadata.get("title", "")),
-                        section=str(document.metadata.get("section", "chunk")),
-                        text=str(document.metadata.get("raw_text") or document.page_content),
-                        score=round(score, 4),
-                    )
-                )
+                evidence.append(self._evidence_from_document(document, score))
             return evidence
