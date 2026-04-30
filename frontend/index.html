@@ -52,6 +52,7 @@
             <button id="health-button" class="ghost-button compact-button" type="button">健康检查</button>
             <div id="mode-badge" class="mode-badge">当前模式：Ask</div>
             <div id="status-pill" class="status-pill idle" role="status" aria-live="polite">空闲</div>
+            <button id="shortcut-help" class="ghost-button compact-button" type="button" aria-label="快捷键帮助" title="快捷键帮助">?</button>
           </div>
         </header>
 
@@ -182,6 +183,7 @@
             <button class="utility-nav-button" data-utility-panel-target="import" type="button" aria-pressed="false">导入</button>
             <button class="utility-nav-button" data-utility-panel-target="documents" type="button" aria-pressed="false">文件</button>
             <button class="utility-nav-button" data-utility-panel-target="json" type="button" aria-pressed="false">JSON</button>
+            <button class="utility-nav-button" data-utility-panel-target="usage" type="button" aria-pressed="false">用量</button>
           </div>
 
           <section class="utility-panel" data-utility-panel="presets">
@@ -195,6 +197,9 @@
               <button class="preset-button" type="button" data-preset="ask-react">问：ReAct 做了什么</button>
               <button class="preset-button" type="button" data-preset="ask-model">问：你是什么模型</button>
               <button class="preset-button" type="button" data-preset="rag-lab-default">RAG Lab：rerank 对照</button>
+              <button class="preset-button" type="button" data-preset="ask-compare">问：比较 ReAct 和 Toolformer</button>
+              <button class="preset-button" type="button" data-preset="ask-greeting">问：你好</button>
+              <button class="preset-button" type="button" data-preset="ask-meta">问：你能做什么</button>
             </div>
           </section>
 
@@ -236,6 +241,18 @@
               </div>
             </div>
             <pre id="json-output" class="json-output">{}</pre>
+          </section>
+
+          <section class="utility-panel hidden" data-utility-panel="usage">
+            <div class="section-head compact">
+              <div>
+                <p class="section-kicker">Usage</p>
+                <h3>API 用量</h3>
+              </div>
+            </div>
+            <div id="usage-output" class="detail-output compact-output">
+              <p class="empty-note">点击上方"用量"标签查看 API 调用统计。</p>
+            </div>
           </section>
         </div>
       </aside>
