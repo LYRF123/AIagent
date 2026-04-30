@@ -69,24 +69,42 @@ export function renderSessionPanel(session) {
 
 export function renderStreamingAskState(answer, sessionTitle = "\u65B0\u4F1A\u8BDD") {
   const visibleAnswer = answer || "\u6B63\u5728\u751F\u6210\u56DE\u7B54...";
-  summaryOutput.innerHTML = `
-    <div class="summary-block primary">
-      <h3>\u56DE\u7B54\u751F\u6210\u4E2D</h3>
-      <p class="summary-main">${escapeHtml(visibleAnswer)}</p>
-      <p class="summary-meta">\u4F1A\u8BDD\u6807\u9898\uFF1A${escapeHtml(sessionTitle || "\u65B0\u4F1A\u8BDD")}</p>
-    </div>
-    <div class="summary-block">
-      <h3>\u6D41\u5F0F\u8F93\u51FA</h3>
-      <p class="summary-subtext">\u56DE\u7B54\u6B63\u5728\u9010\u6BB5\u8FD4\u56DE\uFF1B\u6700\u7EC8\u8BC1\u636E\u3001\u8F68\u8FF9\u548C\u5B8C\u6574 JSON \u4F1A\u5728\u751F\u6210\u7ED3\u675F\u540E\u8865\u9F50\u3002</p>
-    </div>
-  `;
-  detailOutput.innerHTML = `
-    <div class="detail-block">
-      <h4>\u5B9E\u65F6\u8F93\u51FA</h4>
-      <p>${escapeHtml(visibleAnswer)}</p>
-      <p class="block-note">\u7CFB\u7EDF\u4F1A\u5728\u6D41\u7ED3\u675F\u540E\u8865\u5145\u8BC1\u636E\u7247\u6BB5\u3001\u8C03\u7528\u8F68\u8FF9\u548C\u5B8C\u6574\u4F1A\u8BDD\u5386\u53F2\u3002</p>
-    </div>
-  `;
+  const existingCursor = summaryOutput.querySelector(".streaming-cursor");
+
+  if (existingCursor) {
+    // Incremental update: only replace text before cursor
+    const mainEl = summaryOutput.querySelector(".summary-main");
+    if (mainEl) {
+      // Remove old text nodes and cursor, rebuild
+      mainEl.textContent = "";
+      mainEl.append(visibleAnswer);
+      mainEl.appendChild(existingCursor);
+    }
+    const metaEl = summaryOutput.querySelector(".summary-meta");
+    if (metaEl) {
+      metaEl.textContent = `\u4F1A\u8BDD\u6807\u9898\uFF1A${sessionTitle || "\u65B0\u4F1A\u8BDD"}`;
+    }
+  } else {
+    // First call: set up full structure
+    summaryOutput.innerHTML = `
+      <div class="summary-block primary">
+        <h3>\u56DE\u7B54\u751F\u6210\u4E2D</h3>
+        <p class="summary-main">${escapeHtml(visibleAnswer)}<span class="streaming-cursor" aria-hidden="true"></span></p>
+        <p class="summary-meta">\u4F1A\u8BDD\u6807\u9898\uFF1A${escapeHtml(sessionTitle || "\u65B0\u4F1A\u8BDD")}</p>
+      </div>
+      <div class="summary-block">
+        <h3>\u6D41\u5F0F\u8F93\u51FA</h3>
+        <p class="summary-subtext">\u56DE\u7B54\u6B63\u5728\u9010\u6BB5\u8FD4\u56DE\uFF1B\u6700\u7EC8\u8BC1\u636E\u3001\u8F68\u8FF9\u548C\u5B8C\u6574 JSON \u4F1A\u5728\u751F\u6210\u7ED3\u675F\u540E\u8865\u9F50\u3002</p>
+      </div>
+    `;
+    detailOutput.innerHTML = `
+      <div class="detail-block skeleton-block">
+        <div class="skeleton-line"></div>
+        <div class="skeleton-line skeleton-line-short"></div>
+        <div class="skeleton-line skeleton-line-mid"></div>
+      </div>
+    `;
+  }
 }
 
 export function renderMetricCards(entries) {
