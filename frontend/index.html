@@ -8,11 +8,22 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
+      <button
+        id="session-sidebar-toggle"
+        class="session-sidebar-toggle"
+        type="button"
+        aria-controls="session-sidebar"
+        aria-expanded="true"
+        aria-label="关闭历史会话侧栏"
+      >
+        <span class="session-toggle-lines" aria-hidden="true"></span>
+      </button>
+
+      <aside id="session-sidebar" class="sidebar session-sidebar" aria-label="历史会话">
         <div class="sidebar-panel brand-panel">
           <p class="eyebrow">Research Agent</p>
           <h1>研究助手</h1>
-          <p class="sidebar-copy">把问答、检索和评测收进一个更像对话工作台的界面里。</p>
+          <p class="sidebar-copy">本地论文与文档研究工作台。</p>
         </div>
 
         <div class="sidebar-panel sessions-panel">
@@ -21,7 +32,7 @@
               <p class="section-kicker">Sessions</p>
               <h2>会话</h2>
             </div>
-            <button id="new-session" class="ghost-button compact-button" type="button">新建</button>
+            <button id="new-session" class="ghost-button compact-button" type="button">新建会话</button>
           </div>
           <div id="sessions-output" class="session-list">
             <p class="empty-note">还没有会话。</p>
@@ -36,35 +47,23 @@
             <h2>当前工作区</h2>
           </div>
           <div class="workspace-tools">
-            <button id="open-tools" class="menu-button" type="button">Tools</button>
+            <button id="open-tools" class="menu-button" type="button" aria-controls="utility-drawer" aria-expanded="false">工具</button>
             <button id="health-button" class="ghost-button compact-button" type="button">健康检查</button>
-            <div id="mode-badge" class="mode-badge">当前模式：问答</div>
-            <div id="status-pill" class="status-pill idle">空闲</div>
+            <div id="mode-badge" class="mode-badge">当前模式：Ask</div>
+            <div id="status-pill" class="status-pill idle" role="status" aria-live="polite">空闲</div>
           </div>
         </header>
 
         <footer class="composer-shell card">
           <div class="composer-head">
-            <div class="mode-tabs">
-              <button class="mode-button active" data-mode="ask" type="button">
-                <strong>问答</strong>
-                <span>Answer</span>
+            <div class="mode-tabs" aria-label="运行模式">
+              <button class="mode-button active" data-mode="ask" type="button" aria-pressed="true">
+                <strong>Ask</strong>
+                <span>Evidence Q&amp;A</span>
               </button>
-              <button class="mode-button" data-mode="search" type="button">
-                <strong>检索</strong>
-                <span>Search</span>
-              </button>
-              <button class="mode-button" data-mode="compare" type="button">
-                <strong>对比</strong>
-                <span>Compare</span>
-              </button>
-              <button class="mode-button" data-mode="review" type="button">
-                <strong>综述</strong>
-                <span>Review</span>
-              </button>
-              <button class="mode-button" data-mode="evaluate" type="button">
-                <strong>评测</strong>
-                <span>Eval</span>
+              <button class="mode-button" data-mode="rag_lab" type="button" aria-pressed="false">
+                <strong>RAG Lab</strong>
+                <span>Evaluation</span>
               </button>
             </div>
           </div>
@@ -79,6 +78,23 @@
               <span>问题</span>
               <textarea id="ask-question" rows="8">ReAct 是如何把推理和工具调用结合起来的？</textarea>
             </label>
+
+            <div class="rag-lab-panel mode-rag_lab hidden" data-mode="rag_lab">
+              <div class="rag-lab-grid">
+                <label class="field slim">
+                  <span>Candidate K</span>
+                  <input id="candidate-k" type="number" min="1" max="100" value="20" />
+                </label>
+                <label class="toggle-field">
+                  <input id="rag-rerank" type="checkbox" checked />
+                  <span>Rerank</span>
+                </label>
+                <label class="toggle-field">
+                  <input id="rag-compare-configs" type="checkbox" checked />
+                  <span>rerank_on/off</span>
+                </label>
+              </div>
+            </div>
 
             <label class="field mode-compare hidden" data-mode="compare">
               <span>论文 ID</span>
@@ -106,12 +122,16 @@
                   <input id="strict-grounded" type="checkbox" checked />
                   <span>严格证据模式</span>
                 </label>
+                <label class="toggle-field mode-evaluate hidden" data-mode="evaluate">
+                  <input id="use-ragas" type="checkbox" />
+                  <span>Ragas 评估</span>
+                </label>
                 <label class="field slim topk-field">
                   <span>Top K</span>
                   <input id="top-k" type="number" min="1" max="10" value="5" />
                 </label>
               </div>
-              <button id="submit-button" class="primary-button composer-submit" type="submit">运行问答</button>
+              <button id="submit-button" class="primary-button composer-submit" type="submit">运行 Ask</button>
             </div>
           </form>
         </footer>
@@ -124,10 +144,10 @@
                 <h2>当前输出</h2>
               </div>
             </div>
-            <div id="summary-output" class="summary-output">
+            <div id="summary-output" class="summary-output" aria-live="polite">
               <div class="empty-state">
                 <h3>还没有结果</h3>
-                <p>选择模式并发送请求。这里会优先展示当前问题的回答和结论。</p>
+                <p>当前请求的回答、结论和指标会显示在这里。</p>
               </div>
             </div>
           </section>
@@ -139,14 +159,14 @@
                 <h2>证据与轨迹</h2>
               </div>
             </div>
-            <div id="detail-output" class="detail-output">
+            <div id="detail-output" class="detail-output" aria-live="polite">
               <p class="empty-note">证据片段、调用轨迹和结构化内容会显示在这里。</p>
             </div>
           </section>
         </section>
       </main>
 
-      <aside id="utility-drawer" class="utility-drawer hidden">
+      <aside id="utility-drawer" class="utility-drawer hidden" aria-hidden="true">
         <div class="utility-shell card">
           <div class="section-head compact">
             <div>
@@ -156,11 +176,11 @@
             <button id="close-utility" class="ghost-button compact-button" type="button">关闭</button>
           </div>
 
-          <div class="utility-nav">
-            <button class="utility-nav-button active" data-utility-panel-target="presets" type="button">预设</button>
-            <button class="utility-nav-button" data-utility-panel-target="import" type="button">导入</button>
-            <button class="utility-nav-button" data-utility-panel-target="documents" type="button">文件</button>
-            <button class="utility-nav-button" data-utility-panel-target="json" type="button">JSON</button>
+          <div class="utility-nav" aria-label="工具面板">
+            <button class="utility-nav-button active" data-utility-panel-target="presets" type="button" aria-pressed="true">预设</button>
+            <button class="utility-nav-button" data-utility-panel-target="import" type="button" aria-pressed="false">导入</button>
+            <button class="utility-nav-button" data-utility-panel-target="documents" type="button" aria-pressed="false">文件</button>
+            <button class="utility-nav-button" data-utility-panel-target="json" type="button" aria-pressed="false">JSON</button>
           </div>
 
           <section class="utility-panel" data-utility-panel="presets">
@@ -173,10 +193,7 @@
             <div class="preset-list">
               <button class="preset-button" type="button" data-preset="ask-react">问：ReAct 做了什么</button>
               <button class="preset-button" type="button" data-preset="ask-model">问：你是什么模型</button>
-              <button class="preset-button" type="button" data-preset="search-rag">检索：self-rag</button>
-              <button class="preset-button" type="button" data-preset="compare-agent">对比：react toolformer</button>
-              <button class="preset-button" type="button" data-preset="review-agent">综述：multi agent</button>
-              <button class="preset-button" type="button" data-preset="evaluate-demo">跑：内置评测</button>
+              <button class="preset-button" type="button" data-preset="rag-lab-default">RAG Lab：rerank 对照</button>
             </div>
           </section>
 
@@ -193,7 +210,7 @@
                 <input id="upload-file" type="file" accept=".pdf,.docx,.txt" />
               </label>
               <button id="upload-button" class="primary-button" type="submit">导入到知识库</button>
-              <p class="helper-text">导入后会自动刷新索引，后续问答和检索会直接使用新文档。</p>
+              <p class="helper-text">导入后会自动刷新索引，后续 Ask 和 RAG Lab 会直接使用新文档。</p>
             </form>
           </section>
 
@@ -223,6 +240,6 @@
       </aside>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script type="module" src="/static/app.js"></script>
   </body>
 </html>
