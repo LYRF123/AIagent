@@ -51,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--top-k", type=int, default=5)
     eval_parser.add_argument("--ragas", action="store_true", help="Run optional Ragas LLM-as-judge metrics")
     eval_parser.add_argument("--include-imported", action="store_true", help="Include locally imported documents during evaluation")
+
+    serve_parser = subparsers.add_parser("serve")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8000)
+    serve_parser.add_argument("--legacy", action="store_true", help="Use legacy stdlib HTTP server")
     return parser
 
 
@@ -77,6 +82,19 @@ def main() -> None:
         payload = agent.compare_papers(paper_ids=args.ids, query=args.query, focus=args.focus).model_dump()
     elif args.command == "review":
         payload = agent.generate_review(args.topic, top_k=args.top_k).model_dump()
+    elif args.command == "serve":
+        if args.legacy:
+            from .server import main as server_main
+            server_main()
+        else:
+            import uvicorn
+            uvicorn.run(
+                "research_agent.fastapi_server:app",
+                host=args.host,
+                port=args.port,
+                log_level="info",
+            )
+        return
     else:
         payload = run_evaluation(agent, eval_path=args.eval_path, top_k=args.top_k, use_ragas=args.ragas)
 

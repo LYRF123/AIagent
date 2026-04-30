@@ -4,6 +4,7 @@ version = "0.3.0"
 description = "Research assistant agent with LangChain, FAISS, DashScope Qwen, and local document import"
 requires-python = ">=3.11"
 dependencies = [
+  "fastapi",
   "faiss-cpu",
   "langchain-community",
   "langchain-openai",
@@ -13,8 +14,9 @@ dependencies = [
   "pypdf",
   "pytest",
   "python-docx",
-  "ragas",
-  "scikit-learn"
+  "ragas>=0.4,<0.5",
+  "scikit-learn",
+  "uvicorn[standard]"
 ]
 
 [project.scripts]
