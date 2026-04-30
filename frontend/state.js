@@ -85,6 +85,7 @@ export const utilityLabels = {
   import: "\u6587\u6863\u5BFC\u5165",
   documents: "\u77E5\u8BC6\u5E93\u6587\u4EF6",
   json: "\u539F\u59CB JSON",
+  usage: "API \u7528\u91CF",
 };
 
 export const ragFlightStageOrder = ["query_expansion", "tfidf", "bm25", "vector", "fusion", "rerank", "final"];
