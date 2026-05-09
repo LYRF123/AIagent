@@ -1,263 +1,122 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Research Agent</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <title>呆呆鸟助手</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='34' r='22' fill='%23FACC3C'/><path d='M22 14 L24 5 L26 14 Z' fill='%232a2a2a'/><path d='M31 12 L33 3 L35 12 Z' fill='%232a2a2a'/><path d='M40 14 L42 5 L44 14 Z' fill='%232a2a2a'/><circle cx='24' cy='30' r='4.5' fill='white'/><circle cx='40' cy='30' r='4.5' fill='white'/><circle cx='24' cy='30' r='1.6' fill='%231a1a1a'/><circle cx='40' cy='30' r='1.6' fill='%231a1a1a'/><ellipse cx='32' cy='42' rx='9' ry='5' fill='%23E8931E'/></svg>" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260509-1" />
   </head>
   <body>
-    <a href="#main-content" class="skip-link">Skip to main content</a>
     <div class="app-shell">
-      <button
-        id="session-sidebar-toggle"
-        class="session-sidebar-toggle"
-        type="button"
-        aria-controls="session-sidebar"
-        aria-expanded="true"
-        aria-label="关闭历史会话侧栏"
-      >
-        <span class="session-toggle-lines" aria-hidden="true"></span>
+      <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="切换侧栏">
+        <span class="toggle-icon"></span>
       </button>
 
-      <aside id="session-sidebar" class="sidebar session-sidebar" aria-label="历史会话">
-        <div class="sidebar-panel brand-panel">
-          <p class="eyebrow">Research Agent</p>
-          <h1>研究助手</h1>
-          <p class="sidebar-copy">本地论文与文档研究工作台。</p>
+      <aside id="sidebar" class="sidebar">
+        <div class="sidebar-header">
+          <div class="brand-lockup">
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 64 64" width="22" height="22" xmlns="http://www.w3.org/2000/svg">
+                <path d="M22 14 L24 5 L26 14 Z" fill="#2a2a2a"/>
+                <path d="M31 12 L33 3 L35 12 Z" fill="#2a2a2a"/>
+                <path d="M40 14 L42 5 L44 14 Z" fill="#2a2a2a"/>
+                <circle cx="32" cy="34" r="21" fill="#FACC3C"/>
+                <ellipse cx="32" cy="44" rx="10" ry="5" fill="#E8931E"/>
+                <circle cx="24" cy="30" r="5" fill="#ffffff"/>
+                <circle cx="40" cy="30" r="5" fill="#ffffff"/>
+                <circle cx="24" cy="30" r="1.8" fill="#1a1a1a"/>
+                <circle cx="40" cy="30" r="1.8" fill="#1a1a1a"/>
+              </svg>
+            </span>
+            <h2 class="sidebar-brand">呆呆鸟助手</h2>
+          </div>
         </div>
 
-        <div class="sidebar-panel sessions-panel">
-          <div class="section-head compact">
-            <div>
-              <p class="section-kicker">Sessions</p>
-              <h2>会话</h2>
+        <nav class="sidebar-nav" aria-label="对话导航">
+          <button id="new-chat" class="nav-button nav-button-primary" type="button">
+            <span aria-hidden="true">+</span>
+            新建对话
+          </button>
+
+          <div class="sidebar-section">
+            <button class="nav-button nav-button-static" type="button" aria-expanded="true">
+              <span aria-hidden="true">⌕</span>
+              历史对话
+            </button>
+            <div class="sidebar-history" id="sessions-output">
+              <p class="empty-note">还没有会话。</p>
             </div>
-            <button id="new-session" class="ghost-button compact-button" type="button">新建会话</button>
           </div>
-          <div id="sessions-output" class="session-list">
-            <p class="empty-note">还没有会话。</p>
-          </div>
+
+          <button id="upload-doc-button" class="nav-button" type="button">
+            <span aria-hidden="true">📄</span>
+            导入文档
+          </button>
+          <input id="upload-file-input" type="file" accept=".pdf,.docx,.txt" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" />
+
+          <button id="settings-button" class="nav-button" type="button">
+            <span aria-hidden="true">⚙</span>
+            设置
+          </button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <button id="clear-chat" class="danger-button" type="button">清空对话</button>
         </div>
       </aside>
 
-      <main id="main-content" class="workspace">
-        <header class="workspace-top">
-          <div>
-            <p class="section-kicker">Workspace</p>
-            <h2>当前工作区</h2>
-          </div>
-          <div class="workspace-tools">
-            <button id="open-tools" class="menu-button" type="button" aria-controls="utility-drawer" aria-expanded="false">工具</button>
-            <button id="health-button" class="ghost-button compact-button" type="button">健康检查</button>
-            <div id="mode-badge" class="mode-badge">当前模式：Ask</div>
-            <div id="status-pill" class="status-pill idle" role="status" aria-live="polite">空闲</div>
-            <button id="shortcut-help" class="ghost-button compact-button" type="button" aria-label="快捷键帮助" title="快捷键帮助">?</button>
-          </div>
-        </header>
+      <main id="main-content" class="chat-main">
+        <section class="conversation-panel" aria-labelledby="assistant-title">
+          <header class="chat-panel-header">
+            <div>
+              <p class="panel-kicker">Assistant</p>
+              <h1 id="assistant-title">呆呆鸟助手</h1>
+            </div>
+            <span class="status-pill">在线</span>
+          </header>
 
-        <footer class="composer-shell card">
-          <div class="composer-head">
-            <div class="mode-tabs" aria-label="运行模式">
-              <button class="mode-button active" data-mode="ask" type="button" aria-pressed="true">
-                <strong>Ask</strong>
-                <span>Evidence Q&amp;A</span>
+          <div id="chat-messages" class="chat-messages">
+            <div id="welcome-screen" class="welcome-screen">
+              <div class="welcome-copy">
+                <div class="welcome-mascot" aria-hidden="true">
+                  <svg viewBox="0 0 160 160" width="96" height="96" xmlns="http://www.w3.org/2000/svg">
+                    <ellipse cx="80" cy="148" rx="40" ry="5" fill="rgba(28,42,31,0.12)"/>
+                    <path d="M52 40 L56 18 L60 40 Z" fill="#2a2a2a"/>
+                    <path d="M76 36 L80 14 L84 36 Z" fill="#2a2a2a"/>
+                    <path d="M100 40 L104 18 L108 40 Z" fill="#2a2a2a"/>
+                    <ellipse cx="80" cy="86" rx="50" ry="52" fill="#FACC3C"/>
+                    <ellipse cx="80" cy="100" rx="46" ry="44" fill="#FFDE66"/>
+                    <ellipse cx="80" cy="118" rx="28" ry="12" fill="#E8931E"/>
+                    <path d="M56 118 Q80 128 104 118 Q104 130 80 132 Q56 130 56 118 Z" fill="#D97E15"/>
+                    <circle cx="62" cy="78" r="13" fill="#ffffff"/>
+                    <circle cx="98" cy="78" r="13" fill="#ffffff"/>
+                    <circle cx="62" cy="78" r="4.2" fill="#1a1a1a"/>
+                    <circle cx="98" cy="78" r="4.2" fill="#1a1a1a"/>
+                    <circle cx="63.6" cy="76.4" r="1.4" fill="#ffffff"/>
+                    <circle cx="99.6" cy="76.4" r="1.4" fill="#ffffff"/>
+                    <ellipse cx="44" cy="96" rx="5" ry="3" fill="#F4A3A3" opacity="0.7"/>
+                    <ellipse cx="116" cy="96" rx="5" ry="3" fill="#F4A3A3" opacity="0.7"/>
+                  </svg>
+                </div>
+                <h2>今天想问什么？</h2>
+                <p class="welcome-hint">呆呆鸟在认真听，你就随便问吧</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-composer-wrap">
+            <form id="chat-form" class="chat-composer" action="javascript:void(0)" novalidate>
+              <textarea id="chat-input" class="chat-input" placeholder="问问题..." rows="1" autofocus></textarea>
+              <button id="chat-submit" class="primary-button chat-submit-btn" type="button" title="发送 (Enter)">
+                <span class="submit-icon">&#x27A4;</span>
               </button>
-              <button class="mode-button" data-mode="rag_lab" type="button" aria-pressed="false">
-                <strong>RAG Lab</strong>
-                <span>Evaluation</span>
-              </button>
-            </div>
+            </form>
           </div>
-
-          <form id="agent-form" class="form-stack composer-form">
-            <label class="field mode-search hidden" data-mode="search">
-              <span>检索词</span>
-              <textarea id="search-query" rows="6">self reflection retrieval</textarea>
-            </label>
-
-            <label class="field mode-ask" data-mode="ask">
-              <span>问题</span>
-              <textarea id="ask-question" rows="8">ReAct 是如何把推理和工具调用结合起来的？</textarea>
-            </label>
-
-            <div class="rag-lab-panel mode-rag_lab hidden" data-mode="rag_lab">
-              <div class="rag-lab-grid">
-                <label class="field slim">
-                  <span>Candidate K</span>
-                  <input id="candidate-k" type="number" min="1" max="100" value="20" />
-                </label>
-                <label class="toggle-field">
-                  <input id="rag-rerank" type="checkbox" checked />
-                  <span>Rerank</span>
-                </label>
-                <label class="toggle-field">
-                  <input id="rag-compare-configs" type="checkbox" checked />
-                  <span>rerank_on/off</span>
-                </label>
-              </div>
-            </div>
-
-            <label class="field mode-compare hidden" data-mode="compare">
-              <span>论文 ID</span>
-              <input id="compare-ids" value="react toolformer" />
-            </label>
-
-            <label class="field mode-compare hidden" data-mode="compare">
-              <span>对比重点</span>
-              <textarea id="compare-focus" rows="6">方法、结论和局限性</textarea>
-            </label>
-
-            <label class="field mode-review hidden" data-mode="review">
-              <span>主题</span>
-              <textarea id="review-topic" rows="6">multi agent software development</textarea>
-            </label>
-
-            <label class="field mode-evaluate hidden" data-mode="evaluate">
-              <span>评测说明</span>
-              <textarea id="evaluate-note" rows="6" readonly>运行内置 demo_eval.json，统计 paper 命中率、关键词命中率、平均回答长度和失败样例。</textarea>
-            </label>
-
-            <div class="composer-footer">
-              <div class="composer-meta-row">
-                <label class="toggle-field mode-ask" data-mode="ask">
-                  <input id="strict-grounded" type="checkbox" checked />
-                  <span>严格证据模式</span>
-                </label>
-                <label class="toggle-field mode-evaluate hidden" data-mode="evaluate">
-                  <input id="use-ragas" type="checkbox" />
-                  <span>Ragas 评估</span>
-                </label>
-                <label class="field slim topk-field">
-                  <span>Top K</span>
-                  <input id="top-k" type="number" min="1" max="10" value="5" />
-                </label>
-              </div>
-              <button id="submit-button" class="primary-button composer-submit" type="submit">运行 Ask</button>
-            </div>
-          </form>
-        </footer>
-
-        <section class="thread-column">
-          <section class="summary-card card">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Response</p>
-                <h2>当前输出</h2>
-              </div>
-            </div>
-            <div id="summary-output" class="summary-output" aria-live="polite">
-              <div class="empty-state">
-                <h3>还没有结果</h3>
-                <p>当前请求的回答、结论和指标会显示在这里。</p>
-              </div>
-            </div>
-          </section>
-
-          <section class="detail-card card">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Evidence</p>
-                <h2>证据与轨迹</h2>
-              </div>
-            </div>
-            <div id="detail-output" class="detail-output" aria-live="polite">
-              <p class="empty-note">证据片段、调用轨迹和结构化内容会显示在这里。</p>
-            </div>
-          </section>
         </section>
       </main>
-
-      <aside id="utility-drawer" class="utility-drawer hidden" aria-hidden="true">
-        <div class="utility-shell card">
-          <div class="section-head compact">
-            <div>
-              <p class="section-kicker">Tools</p>
-              <h2 id="utility-title">工具面板</h2>
-            </div>
-            <button id="close-utility" class="ghost-button compact-button" type="button">关闭</button>
-          </div>
-
-          <div class="utility-nav" aria-label="工具面板">
-            <button class="utility-nav-button active" data-utility-panel-target="presets" type="button" aria-pressed="true">预设</button>
-            <button class="utility-nav-button" data-utility-panel-target="import" type="button" aria-pressed="false">导入</button>
-            <button class="utility-nav-button" data-utility-panel-target="documents" type="button" aria-pressed="false">文件</button>
-            <button class="utility-nav-button" data-utility-panel-target="json" type="button" aria-pressed="false">JSON</button>
-            <button class="utility-nav-button" data-utility-panel-target="usage" type="button" aria-pressed="false">用量</button>
-          </div>
-
-          <section class="utility-panel" data-utility-panel="presets">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Presets</p>
-                <h3>快捷示例</h3>
-              </div>
-            </div>
-            <div class="preset-list">
-              <button class="preset-button" type="button" data-preset="ask-react">问：ReAct 做了什么</button>
-              <button class="preset-button" type="button" data-preset="ask-model">问：你是什么模型</button>
-              <button class="preset-button" type="button" data-preset="rag-lab-default">RAG Lab：rerank 对照</button>
-              <button class="preset-button" type="button" data-preset="ask-compare">问：比较 ReAct 和 Toolformer</button>
-              <button class="preset-button" type="button" data-preset="ask-greeting">问：你好</button>
-              <button class="preset-button" type="button" data-preset="ask-meta">问：你能做什么</button>
-            </div>
-          </section>
-
-          <section class="utility-panel hidden" data-utility-panel="import">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Import</p>
-                <h3>文档导入</h3>
-              </div>
-            </div>
-            <form id="upload-form" class="form-stack">
-              <label class="field">
-                <span>支持 PDF / DOCX / TXT</span>
-                <input id="upload-file" type="file" accept=".pdf,.docx,.txt" />
-              </label>
-              <button id="upload-button" class="primary-button" type="submit">导入到知识库</button>
-              <p class="helper-text">导入后会自动刷新索引，后续 Ask 和 RAG Lab 会直接使用新文档。</p>
-            </form>
-          </section>
-
-          <section class="utility-panel hidden" data-utility-panel="documents">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Library</p>
-                <h3>知识库文件</h3>
-              </div>
-              <button id="refresh-documents" class="ghost-button compact-button" type="button">刷新列表</button>
-            </div>
-            <div id="documents-output" class="detail-output compact-output">
-              <p class="empty-note">还没有导入文件。</p>
-            </div>
-          </section>
-
-          <section class="utility-panel hidden" data-utility-panel="json">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Raw</p>
-                <h3>原始 JSON</h3>
-              </div>
-            </div>
-            <pre id="json-output" class="json-output">{}</pre>
-          </section>
-
-          <section class="utility-panel hidden" data-utility-panel="usage">
-            <div class="section-head compact">
-              <div>
-                <p class="section-kicker">Usage</p>
-                <h3>API 用量</h3>
-              </div>
-            </div>
-            <div id="usage-output" class="detail-output compact-output">
-              <p class="empty-note">点击上方"用量"标签查看 API 调用统计。</p>
-            </div>
-          </section>
-        </div>
-      </aside>
     </div>
 
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=20260508-2"></script>
   </body>
 </html>

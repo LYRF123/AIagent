@@ -2,7 +2,7 @@
 
 `Research Agent` 是一个面向论文阅读、资料检索和 AI Agent 面试准备的轻量研究助手。项目内置了一份小型公开论文示例语料，也支持导入本地 PDF、DOCX、TXT 文档，把它们加入知识库后进行检索、问答、对比、综述和离线评测。
 
-项目既可以通过命令行使用，也提供了一个本地浏览器工作台。配置 DashScope API Key 后会调用阿里云 DashScope 的 Qwen 模型、Embedding 和重排能力；没有配置模型密钥时，也可以退回到本地规则生成和关键词检索流程。
+项目既可以通过命令行使用，也提供了一个本地浏览器工作台。配置 DashScope API Key 后会调用阿里云 DashScope 的 Qwen 模型、Embedding 和重排能力；未配置模型密钥时会回退到本地规则生成和关键词检索流程。
 
 ## 主要功能
 
@@ -13,23 +13,25 @@
 - 论文对比：按论文 ID 或检索结果对比多篇论文的方法、发现和局限。
 - 主题综述：围绕一个主题生成简短综述、趋势、代表论文、阅读顺序和开放问题。
 - 本地文档导入：支持导入 PDF、DOCX、TXT，并自动刷新知识库索引。
-- 离线评测：运行内置 `demo_eval.json`，统计论文命中率、关键词命中率、平均回答长度和失败样例。
+- 离线评测：运行内置 `demo_eval.json`，统计论文命中率、关键词命中率、平均回答长度和失败案例。
+- Ragas 评估：配置 DashScope 后可运行 faithfulness、context precision、context recall、answer relevancy 等 LLM-as-judge 指标。
 - CLI 与 Web UI：既能在终端运行，也能通过 `http://127.0.0.1:8000` 使用中文界面。
 
 ## 技术栈
 
-- Python 3.12+
+- Python 3.11+
 - scikit-learn：TF-IDF 检索
 - 自实现 BM25：关键词召回
 - LangChain + FAISS：向量检索
 - DashScope Qwen：对话生成、Embedding、文本重排
+- Ragas：RAG 回答质量和证据质量评估
 - pypdf / python-docx：本地文件解析
-- 原生 `http.server`：本地后端服务
+- FastAPI + Uvicorn：默认后端服务（原生 http.server 通过 --legacy 可用）
 - 原生 HTML/CSS/JavaScript：前端工作台
 
 ## 安装依赖
 
-建议使用 Python 3.12 或更高版本。
+建议使用 Python 3.11 或更高版本。
 
 ```powershell
 cd F:\codex\AIagent
@@ -58,6 +60,14 @@ $env:DASHSCOPE_RERANK_MODEL = 'gte-rerank-v2'
 项目也会读取仓库根目录下的 `.env` 文件，但不要把包含真实密钥的 `.env` 提交到仓库。
 
 ## 命令行使用
+
+安装后可以直接使用 `research-agent` 命令，无需手动输入 `python -m research_agent.cli`：
+
+```powershell
+research-agent search --query "self reflection retrieval" --top-k 5
+```
+
+下面列出所有子命令的完整用法（`research-agent <子命令> ...` 与 `python -m research_agent.cli <子命令> ...` 等价）：
 
 检索论文：
 
@@ -89,6 +99,32 @@ python -m research_agent.cli review --topic "multi agent software development"
 python -m research_agent.cli eval
 ```
 
+默认评测使用内置示例语料，不加载本地已导入文档，避免本地上传资料影响 demo 指标。如需把本地导入文档也纳入评测，可加：
+
+```powershell
+python -m research_agent.cli eval --include-imported
+```
+
+运行 Ragas 评估：
+
+```powershell
+python -m research_agent.cli eval --ragas
+```
+
+`--ragas` 需要配置 `DASHSCOPE_API_KEY`，否则会保留基础评测结果，并在 JSON 结果中标记 Ragas 指标已跳过。
+
+从本地论文文件夹生成评测集：
+
+```powershell
+python scripts/generate_ragas_eval.py --input-dir "F:\文献" --output-corpus data\literature_papers.json --output-eval data\literature_eval.json
+```
+
+使用生成的 corpus 和评测集运行：
+
+```powershell
+python -m research_agent.cli --corpus data\literature_papers.json eval --eval-path data\literature_eval.json --ragas
+```
+
 ## 启动 Web 工作台
 
 ```powershell
@@ -101,17 +137,21 @@ python -m research_agent.server
 http://127.0.0.1:8000
 ```
 
+如果要让 Web 工作台使用自定义论文库和评测集，可以先设置：
+
+```powershell
+$env:RESEARCH_AGENT_CORPUS = 'data\literature_papers.json'
+$env:RESEARCH_AGENT_EVAL_PATH = 'data\literature_eval.json'
+python -m research_agent.server
+```
+
 Web 界面提供以下入口：
 
-- 问答
-- 检索
-- 对比
-- 综述
-- 评测
-- 会话管理
-- 文档导入和删除
-- 原始 JSON 查看
-- 服务健康检查
+- 呆呆鸟助手聊天主界面（流式问答 + 会话侧栏）
+- 思考步骤动画：检索 → 拆解 → 生成 → 引用
+- 证据片段折叠卡（默认展示前 3 条）
+- 新建 / 切换 / 清空对话
+- 导入 PDF / DOCX / TXT 文档
 
 ## 项目结构
 
@@ -122,28 +162,45 @@ AIagent/
     demo_eval.json            # 内置评测集
     imported_papers.json      # 导入文档索引
   frontend/
-    index.html                # Web 页面
-    app.js                    # 前端交互逻辑
-    styles.css                # 页面样式
+    index.html                # Web 页面（呆呆鸟聊天主界面）
+    app.js                    # 前端交互入口
+    state.js                  # DOM 引用与前端状态
+    api.js                    # REST API 调用
+    stream.js                 # /ask-stream SSE 流式驱动
+    styles.css                # 页面样式（含思考动画、呆呆鸟图标）
+    handlers/
+      sidebar.js              # 侧栏开关
+    render/
+      chat.js                 # 聊天气泡、思考动画、证据片段
+      sessions.js             # 会话列表
+      escape.js               # 转义与 markdown 辅助
   research_agent/
-    agent.py                  # 研究助手核心逻辑
+    __init__.py
+    agent.py                  # 研究助手核心逻辑（编排层）
+    answer_generator.py       # 答案生成（规则 + LLM + 流式）
     app_service.py            # 会话和问答应用服务
     cli.py                    # 命令行入口
+    comparison.py             # 论文对比逻辑
     corpus.py                 # 论文语料加载和维护
     evaluation.py             # 离线评测
     file_import.py            # PDF/DOCX/TXT 导入
     hybrid.py                 # 混合检索和重排
     llm.py                    # DashScope/Qwen 客户端
+    logging_config.py         # 日志配置
     models.py                 # Pydantic 数据模型
     rag.py                    # LangChain + FAISS 向量检索
     retrieval.py              # TF-IDF、BM25、查询扩展
+    review.py                 # 主题综述逻辑
     server.py                 # 本地 HTTP 服务
     session_store.py          # 会话持久化
   scripts/
+    generate_ragas_eval.py    # 从本地文献文件夹生成 Ragas 评测集
     prepare_openalex.py       # OpenAlex 数据转换
     prepare_qasper.py         # QASPER 评测集转换
   tests/
+    conftest.py
     test_agent.py
+    test_cli_and_server.py
     test_grounding_and_files.py
     test_sessions.py
   uploads/
@@ -164,4 +221,4 @@ AIagent/
 python -m pytest -q
 ```
 
-如果测试阶段提示缺少 `langchain_community`、`faiss-cpu` 等包，请先确认已经在 Python 3.12 环境里完成依赖安装。
+如果测试阶段提示缺少 `langchain_community`、`faiss-cpu` 等包，请先确认已经在 Python 3.11 环境里完成依赖安装。

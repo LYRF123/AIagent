@@ -2,8 +2,8 @@ import {
   sessionSidebarStorageKey,
   compactSessionSidebarQuery,
   appShell,
-  sessionSidebarToggle,
-  sessionSidebar,
+  sidebarToggle,
+  sidebar,
 } from "../state.js";
 
 export function getStoredSessionSidebarState() {
@@ -30,21 +30,20 @@ export function shouldStartWithSessionSidebarOpen() {
 }
 
 export function setSessionSidebarOpen(nextIsOpen, options = {}) {
-  if (!appShell || !sessionSidebarToggle) {
+  if (!appShell || !sidebarToggle) {
     return;
   }
 
   const isOpen = Boolean(nextIsOpen);
   const shouldPersist = options.persist !== false;
-  appShell.classList.toggle("session-sidebar-open", isOpen);
-  appShell.classList.toggle("session-sidebar-collapsed", !isOpen);
-  sessionSidebarToggle.setAttribute("aria-expanded", String(isOpen));
-  sessionSidebarToggle.setAttribute("aria-label", isOpen ? "\u5173\u95ED\u5386\u53F2\u4F1A\u8BDD\u4FA7\u680F" : "\u6253\u5F00\u5386\u53F2\u4F1A\u8BDD\u4FA7\u680F");
+  appShell.classList.toggle("sidebar-collapsed", !isOpen);
+  sidebarToggle.setAttribute("aria-expanded", String(isOpen));
+  sidebarToggle.setAttribute("aria-label", isOpen ? "关闭侧栏" : "打开侧栏");
 
-  if (sessionSidebar) {
-    sessionSidebar.setAttribute("aria-hidden", String(!isOpen));
-    if ("inert" in sessionSidebar) {
-      sessionSidebar.inert = !isOpen;
+  if (sidebar) {
+    sidebar.setAttribute("aria-hidden", String(!isOpen));
+    if ("inert" in sidebar) {
+      sidebar.inert = !isOpen;
     }
   }
 

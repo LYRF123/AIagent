@@ -1,135 +1,161 @@
 import {
-  getCurrentMode,
-  getCurrentUtility,
-  modeButtons,
-  presetButtons,
-  utilityNavButtons,
-  form,
-  uploadForm,
-  uploadFile,
-  refreshDocumentsButton,
-  submitButton,
-  healthButton,
-  newSessionButton,
-  openToolsButton,
-  closeUtilityButton,
-  summaryOutput,
-  detailOutput,
-  jsonOutput,
-  sessionsOutput,
-  documentsOutput,
-  utilityDrawer,
-  appShell,
-  sessionSidebarToggle,
+  appShell, sidebar, sidebarToggle,
+  sessionsOutput, newChatButton, clearChatButton,
+  settingsButton,
+  chatMessages, welcomeScreen, chatForm, chatInput, chatSubmit,
+  getCurrentSessionId, setCurrentSessionId,
+  getIsSubmitting, setIsSubmitting,
   compactSessionSidebarQuery,
-  saveDraft,
-  loadDraft,
-  clearDraft,
+  saveDraft, loadDraft, clearDraft,
 } from "./state.js";
 
-import { setStatus, renderEmptySummary } from "./render/common.js";
-import { escapeHtml } from "./render/escape.js";
-import { focusEvidenceCard } from "./render/evidence.js";
-import { refreshDocuments, refreshSessions, createSession, importDocument, loadSession, deleteSession, deleteDocument } from "./api.js";
-
-import { showMode, runMode, applyPreset } from "./handlers/mode.js";
-import { showUtilityPanel, openUtilityDrawer, closeUtilityDrawer } from "./handlers/utility.js";
+import { refreshSessions, loadSession, createSession, deleteSession, uploadDocument, listDocuments } from "./api.js";
+import { runChatStream } from "./stream.js";
 import {
-  shouldStartWithSessionSidebarOpen,
-  setSessionSidebarOpen,
-  getStoredSessionSidebarState,
-  closeSessionSidebarOnSmallScreen,
+  toggleWelcomeScreen, scrollToBottom, renderSessionHistory,
+} from "./render/chat.js";
+
+import {
+  shouldStartWithSessionSidebarOpen, setSessionSidebarOpen,
+  getStoredSessionSidebarState, closeSessionSidebarOnSmallScreen,
 } from "./handlers/sidebar.js";
 
-modeButtons.forEach((button) => {
-  button.addEventListener("click", () => showMode(button.dataset.mode));
+if (chatForm) {
+  chatForm.setAttribute("action", "javascript:void(0)");
+}
+
+async function submitQuestion(event) {
+  event.preventDefault();
+  const question = chatInput.value.trim();
+  if (!question) return;
+  if (getIsSubmitting()) return;
+
+  setIsSubmitting(true);
+  chatSubmit.disabled = true;
+  clearDraft();
+
+  try {
+    await runChatStream({
+      question,
+      top_k: 3,
+      session_id: getCurrentSessionId() || undefined,
+      strict_grounded: true,
+    });
+  } finally {
+    setIsSubmitting(false);
+    chatSubmit.disabled = false;
+    chatInput.value = "";
+    chatInput.focus();
+  }
+}
+
+// ── 1. 表单提交 ──────────────────────────────────────────────
+chatForm.addEventListener("submit", submitQuestion);
+chatSubmit.addEventListener("click", submitQuestion);
+
+// ── 2. Textarea 自动增高 ────────────────────────────────────
+chatInput.addEventListener("input", () => {
+  chatInput.style.height = "auto";
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + "px";
 });
 
-presetButtons.forEach((button) => {
-  button.addEventListener("click", () => applyPreset(button.dataset.preset));
+// ── 3. Enter 提交 / Shift+Enter 换行 ─────────────────────────
+chatInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    chatForm.requestSubmit();
+  }
 });
 
-utilityNavButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    const target = button.dataset.utilityPanelTarget;
-    if (target) {
-      showUtilityPanel(target);
-    }
+// ── 4. 草稿自动保存 ─────────────────────────────────────────
+let draftTimer = null;
+chatInput.addEventListener("input", () => {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    saveDraft(chatInput.value);
+  }, 300);
+});
+
+// ── 5. 新对话按钮 ───────────────────────────────────────────
+newChatButton.addEventListener("click", async () => {
+  toggleWelcomeScreen(true);
+  for (const child of [...chatMessages.children]) {
+    if (child !== welcomeScreen) child.remove();
+  }
+  await createSession();
+  closeSessionSidebarOnSmallScreen();
+  chatInput.focus();
+});
+
+// ── 6. 清空对话按钮 ─────────────────────────────────────────
+clearChatButton.addEventListener("click", async () => {
+  const sessionToDelete = getCurrentSessionId();
+  if (sessionToDelete) {
+    if (!window.confirm("确认清空当前对话吗？历史消息会一起清空。")) return;
+  }
+  // 先清空 UI
+  toggleWelcomeScreen(true);
+  for (const child of [...chatMessages.children]) {
+    if (child !== welcomeScreen) child.remove();
+  }
+  chatInput.focus();
+  // 再异步清理后端（不阻塞 UI）
+  if (sessionToDelete) {
+    try { await deleteSession(sessionToDelete); } catch { /* ignore */ }
+  }
+});
+
+// ── 上传文档 ─────────────────────────────────────────────────
+const uploadDocButton = document.getElementById("upload-doc-button");
+const uploadFileInput = document.getElementById("upload-file-input");
+
+if (uploadDocButton && uploadFileInput) {
+  uploadDocButton.addEventListener("click", () => {
+    uploadFileInput.click();
+    closeSessionSidebarOnSmallScreen();
   });
-});
 
-if (openToolsButton) {
-  openToolsButton.addEventListener("click", () => {
-    if (utilityDrawer.classList.contains("hidden")) {
-      openUtilityDrawer(getCurrentUtility() || "presets");
-    } else {
-      closeUtilityDrawer();
+  uploadFileInput.addEventListener("change", async () => {
+    const file = uploadFileInput.files[0];
+    if (!file) return;
+
+    const validTypes = [".pdf", ".docx", ".txt"];
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    if (!validTypes.includes(ext)) {
+      window.alert("仅支持 PDF、DOCX、TXT 格式");
+      uploadFileInput.value = "";
+      return;
+    }
+
+    uploadDocButton.disabled = true;
+    uploadDocButton.textContent = "导入中...";
+    try {
+      const result = await uploadDocument(file);
+      window.alert(`已导入: ${result.filename}，当前共 ${result.documents.length} 篇文档`);
+      uploadFileInput.value = "";
+    } catch (err) {
+      window.alert("导入失败: " + (err.message || "未知错误"));
+    } finally {
+      uploadDocButton.disabled = false;
+      uploadDocButton.innerHTML = '<span aria-hidden="true">📄</span> 导入文档';
     }
   });
 }
 
-if (closeUtilityButton) {
-  closeUtilityButton.addEventListener("click", () => {
-    closeUtilityDrawer();
+if (settingsButton) {
+  settingsButton.addEventListener("click", () => {
+    window.alert("设置稍后开放。");
+    closeSessionSidebarOnSmallScreen();
   });
 }
 
-summaryOutput.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  const chip = target?.closest(".citation-chip");
-  if (!chip) {
-    return;
-  }
-  focusEvidenceCard(chip.dataset.citationTarget);
+// ── 7. 侧栏切换 ─────────────────────────────────────────────
+sidebarToggle.addEventListener("click", () => {
+  const nextIsOpen = appShell.classList.contains("sidebar-collapsed");
+  setSessionSidebarOpen(nextIsOpen);
 });
 
-detailOutput.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  const chip = target?.closest(".claim-audit-block .citation-chip");
-  if (!chip) {
-    return;
-  }
-  focusEvidenceCard(chip.dataset.citationTarget);
-});
-
-detailOutput.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  const chip = target?.closest(".contradiction-warning .citation-chip");
-  if (!chip) {
-    return;
-  }
-  focusEvidenceCard(chip.dataset.citationTarget);
-});
-
-detailOutput.addEventListener("click", (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  const btn = target?.closest(".evidence-expand-btn");
-  if (!btn) {
-    return;
-  }
-  const wrap = btn.closest(".evidence-text-wrap");
-  if (!wrap) {
-    return;
-  }
-  const textEl = wrap.querySelector(".evidence-text");
-  if (!textEl) {
-    return;
-  }
-  const isExpanded = btn.dataset.expanded === "true";
-  textEl.classList.toggle("evidence-text-collapsed", isExpanded);
-  btn.dataset.expanded = String(!isExpanded);
-  btn.textContent = isExpanded ? "展开全文" : "收起";
-});
-
-detailOutput.addEventListener("focusin", (event) => {
-  const target = event.target instanceof Element ? event.target : null;
-  const chip = target?.closest(".claim-audit-block .citation-chip");
-  if (!chip) {
-    return;
-  }
-  focusEvidenceCard(chip.dataset.citationTarget, { moveFocus: false });
-});
-
+// ── 8. 会话列表点击委托 ─────────────────────────────────────
 sessionsOutput.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
@@ -137,227 +163,94 @@ sessionsOutput.addEventListener("click", async (event) => {
   if (button.classList.contains("session-open")) {
     const sessionId = button.dataset.sessionId;
     if (!sessionId) return;
-    await loadSession(sessionId);
+    toggleWelcomeScreen(false);
+    for (const child of [...chatMessages.children]) {
+      if (child !== welcomeScreen) child.remove();
+    }
+    const data = await loadSession(sessionId);
+    renderSessionHistory(data.messages);
+    scrollToBottom();
     closeSessionSidebarOnSmallScreen();
     return;
   }
 
-  if (button.classList.contains("delete-session")) {
-    const sessionId = button.dataset.sessionId;
-    if (!sessionId) return;
-    if (!window.confirm("\u786E\u8BA4\u5220\u9664\u8FD9\u4E2A\u4F1A\u8BDD\u5417\uFF1F\u5386\u53F2\u6D88\u606F\u4F1A\u4E00\u8D77\u6E05\u7A7A\u3002")) return;
-    await deleteSession(sessionId);
-  }
+  if (button.classList.contains("delete-session")) return;
 });
 
-documentsOutput.addEventListener("click", async (event) => {
-  const button = event.target.closest(".delete-document");
-  if (!button) return;
-  const paperId = button.dataset.paperId;
-  if (!paperId) return;
-  if (!window.confirm("\u786E\u8BA4\u5220\u9664\u8FD9\u4EFD\u6587\u6863\u5417\uFF1F\u5220\u9664\u540E\u4F1A\u540C\u6B65\u5237\u65B0\u77E5\u8BC6\u5E93\u7D22\u5F15\u3002")) return;
-  await deleteDocument(paperId);
-});
-
-if (sessionSidebarToggle) {
-  sessionSidebarToggle.addEventListener("click", () => {
-    const nextIsOpen = !appShell?.classList.contains("session-sidebar-open");
-    setSessionSidebarOpen(nextIsOpen);
-  });
-}
-
+// ── 9. 键盘快捷键 ───────────────────────────────────────────
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
-    if (!utilityDrawer.classList.contains("hidden")) {
-      closeUtilityDrawer();
-    }
-    if (compactSessionSidebarQuery.matches && appShell?.classList.contains("session-sidebar-open")) {
+    if (compactSessionSidebarQuery.matches && appShell.classList.contains("sidebar-collapsed") === false) {
       setSessionSidebarOpen(false);
     }
     return;
   }
 
-  // Alt+key shortcuts — skip when focus is in a text input
-  if (!event.altKey) {
-    return;
-  }
+  if (!event.altKey) return;
   const tag = document.activeElement?.tagName;
   if (tag === "TEXTAREA" || (tag === "INPUT" && document.activeElement.type !== "checkbox")) {
     return;
   }
 
-  if (event.key === "1") {
-    event.preventDefault();
-    showMode("ask");
-    return;
-  }
-  if (event.key === "2") {
-    event.preventDefault();
-    showMode("rag_lab");
-    return;
-  }
-  if (event.key === "t" || event.key === "T") {
-    event.preventDefault();
-    if (utilityDrawer.classList.contains("hidden")) {
-      openUtilityDrawer(getCurrentUtility() || "presets");
-    } else {
-      closeUtilityDrawer();
-    }
-    return;
-  }
   if (event.key === "n" || event.key === "N") {
     event.preventDefault();
-    createSession();
+    newChatButton.click();
     return;
   }
   if (event.key === "s" || event.key === "S") {
     event.preventDefault();
-    const nextIsOpen = !appShell?.classList.contains("session-sidebar-open");
-    setSessionSidebarOpen(nextIsOpen);
+    sidebarToggle.click();
     return;
   }
 });
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  await runMode(getCurrentMode());
-  clearDraft();
-});
+// ── 10. 移动端左滑关闭侧栏手势 ──────────────────────────────
+const SWIPE_THRESHOLD = 80;
 
-let draftTimer = null;
-form.addEventListener("input", () => {
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => {
-    saveDraft({
-      mode: getCurrentMode(),
-      fields: {
-        "ask-question": document.getElementById("ask-question")?.value || "",
-        "search-query": document.getElementById("search-query")?.value || "",
-        "compare-ids": document.getElementById("compare-ids")?.value || "",
-        "compare-focus": document.getElementById("compare-focus")?.value || "",
-        "review-topic": document.getElementById("review-topic")?.value || "",
-        "candidate-k": document.getElementById("candidate-k")?.value || "20",
-        "rag-rerank": document.getElementById("rag-rerank")?.checked || false,
-        "rag-compare-configs": document.getElementById("rag-compare-configs")?.checked || true,
-        "strict-grounded": document.getElementById("strict-grounded")?.checked || false,
-        "use-ragas": document.getElementById("use-ragas")?.checked || false,
-        "top-k": document.getElementById("top-k")?.value || "5",
-      },
-    });
-  }, 300);
-});
+function addSwipeListener(el, direction, callback) {
+  if (!el) return;
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
 
-form.addEventListener("change", () => {
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => {
-    saveDraft({
-      mode: getCurrentMode(),
-      fields: {
-        "ask-question": document.getElementById("ask-question")?.value || "",
-        "search-query": document.getElementById("search-query")?.value || "",
-        "compare-ids": document.getElementById("compare-ids")?.value || "",
-        "compare-focus": document.getElementById("compare-focus")?.value || "",
-        "review-topic": document.getElementById("review-topic")?.value || "",
-        "candidate-k": document.getElementById("candidate-k")?.value || "20",
-        "rag-rerank": document.getElementById("rag-rerank")?.checked || false,
-        "rag-compare-configs": document.getElementById("rag-compare-configs")?.checked || true,
-        "strict-grounded": document.getElementById("strict-grounded")?.checked || false,
-        "use-ragas": document.getElementById("use-ragas")?.checked || false,
-        "top-k": document.getElementById("top-k")?.value || "5",
-      },
-    });
-  }, 300);
-});
+  el.addEventListener("touchstart", (e) => {
+    const touch = e.touches[0];
+    startX = touch.clientX;
+    startY = touch.clientY;
+    tracking = true;
+  }, { passive: true });
 
-function collectFormDataFromDraft(draft) {
-  if (!draft || !draft.fields) return;
-  for (const [id, value] of Object.entries(draft.fields)) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    if (el.type === "checkbox") {
-      el.checked = Boolean(value);
-    } else {
-      el.value = String(value);
+  el.addEventListener("touchmove", (e) => {
+    if (!tracking) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    if (Math.abs(dy) > Math.abs(dx)) {
+      tracking = false;
     }
-  }
+  }, { passive: true });
+
+  el.addEventListener("touchend", (e) => {
+    if (!tracking) return;
+    tracking = false;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - startX;
+    if (direction === "right" && dx > SWIPE_THRESHOLD) {
+      callback();
+    }
+    if (direction === "left" && dx < -SWIPE_THRESHOLD) {
+      callback();
+    }
+  }, { passive: true });
 }
 
-uploadForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const file = uploadFile.files?.[0];
-  if (!file) {
-    setStatus("\u8BF7\u5148\u9009\u62E9\u6587\u4EF6", "error");
-    return;
-  }
-  try {
-    await importDocument(file);
-    uploadForm.reset();
-  } catch (error) {
-    setStatus("\u5BFC\u5165\u5931\u8D25", "error");
-    renderEmptySummary("\u5BFC\u5165\u5931\u8D25", error.message || "\u6587\u4EF6\u5BFC\u5165\u5931\u8D25");
-    detailOutput.innerHTML = `<p class="empty-note">\u8BF7\u786E\u8BA4\u6587\u4EF6\u683C\u5F0F\u4E3A PDF\u3001DOCX \u6216 TXT\u3002</p>`;
-    jsonOutput.textContent = JSON.stringify({ error: error.message }, null, 2);
-  }
-});
-
-if (refreshDocumentsButton) {
-  refreshDocumentsButton.addEventListener("click", async () => {
-    setStatus("\u6B63\u5728\u5237\u65B0\u6587\u6863\u5217\u8868...", "loading");
-    await refreshDocuments();
-    openUtilityDrawer("documents");
-    setStatus("\u6587\u6863\u5217\u8868\u5DF2\u5237\u65B0", "success");
-  });
-}
-
-if (newSessionButton) {
-  newSessionButton.addEventListener("click", async () => {
-    await createSession();
-    closeSessionSidebarOnSmallScreen();
-  });
-}
-
-const shortcutHelpButton = document.getElementById("shortcut-help");
-if (shortcutHelpButton) {
-  shortcutHelpButton.addEventListener("click", () => {
-    summaryOutput.innerHTML = `
-      <div class="summary-block primary">
-        <h3>快捷键</h3>
-        <div class="shortcut-list">
-          <p><kbd>Ctrl+Enter</kbd> 提交当前表单</p>
-          <p><kbd>Escape</kbd> 关闭抽屉/侧栏</p>
-          <p><kbd>Alt+1</kbd> 切换到 Ask 模式</p>
-          <p><kbd>Alt+2</kbd> 切换到 RAG Lab 模式</p>
-          <p><kbd>Alt+T</kbd> 打开/关闭工具抽屉</p>
-          <p><kbd>Alt+N</kbd> 新建会话</p>
-          <p><kbd>Alt+S</kbd> 切换侧栏</p>
-        </div>
-      </div>
-    `;
-  });
-}
-
-healthButton.addEventListener("click", async () => {
-  setStatus("\u6B63\u5728\u68C0\u67E5\u670D\u52A1...", "loading");
-  try {
-    const response = await fetch("/health");
-    const data = await response.json();
-    setStatus("\u670D\u52A1\u6B63\u5E38", "success");
-    summaryOutput.innerHTML = `
-      <div class="summary-block primary">
-        <h3>\u5065\u5EB7\u68C0\u67E5</h3>
-        <p class="summary-main">\u670D\u52A1\u53EF\u8BBF\u95EE\uFF0C\u72B6\u6001\u6B63\u5E38\u3002</p>
-      </div>
-    `;
-    detailOutput.innerHTML = `<div class="detail-block"><h4>\u8FD4\u56DE\u5185\u5BB9</h4><p>${escapeHtml(JSON.stringify(data))}</p></div>`;
-    jsonOutput.textContent = JSON.stringify(data, null, 2);
-  } catch (error) {
-    setStatus("\u5065\u5EB7\u68C0\u67E5\u5931\u8D25", "error");
-    renderEmptySummary("\u670D\u52A1\u4E0D\u53EF\u7528", error.message || "\u8BF7\u68C0\u67E5\u672C\u5730\u670D\u52A1");
-    detailOutput.innerHTML = `<p class="empty-note">\u5982\u679C\u670D\u52A1\u6CA1\u542F\u52A8\uFF0C\u8BF7\u91CD\u65B0\u8FD0\u884C research_agent.server\u3002</p>`;
-    jsonOutput.textContent = JSON.stringify({ error: error.message }, null, 2);
+addSwipeListener(sidebar, "left", () => {
+  if (compactSessionSidebarQuery.matches) {
+    setSessionSidebarOpen(false);
   }
 });
 
+// ── 11. 响应式 media query 监听 ─────────────────────────────
 if (compactSessionSidebarQuery.addEventListener) {
   compactSessionSidebarQuery.addEventListener("change", () => {
     if (getStoredSessionSidebarState() === null) {
@@ -366,71 +259,13 @@ if (compactSessionSidebarQuery.addEventListener) {
   });
 }
 
+// ── 12. 初始化 ──────────────────────────────────────────────
 setSessionSidebarOpen(shouldStartWithSessionSidebarOpen(), { persist: false });
 const draft = loadDraft();
 if (draft) {
-  if (draft.mode) showMode(draft.mode);
-  collectFormDataFromDraft(draft);
-} else {
-  showMode(getCurrentMode());
+  chatInput.value = draft;
 }
-showUtilityPanel(getCurrentUtility());
-closeUtilityDrawer();
-refreshDocuments();
+toggleWelcomeScreen(true);
 refreshSessions();
 
-// D3: Touch swipe gestures for mobile drawer/sidebar
-(function initTouchGestures() {
-  const SWIPE_THRESHOLD = 80;
-
-  function addSwipeListener(el, direction, callback) {
-    if (!el) return;
-    let startX = 0;
-    let startY = 0;
-    let tracking = false;
-
-    el.addEventListener("touchstart", (e) => {
-      const touch = e.touches[0];
-      startX = touch.clientX;
-      startY = touch.clientY;
-      tracking = true;
-    }, { passive: true });
-
-    el.addEventListener("touchmove", (e) => {
-      if (!tracking) return;
-      const touch = e.touches[0];
-      const dx = touch.clientX - startX;
-      const dy = touch.clientY - startY;
-      // Ignore if vertical scroll is dominant
-      if (Math.abs(dy) > Math.abs(dx)) {
-        tracking = false;
-      }
-    }, { passive: true });
-
-    el.addEventListener("touchend", (e) => {
-      if (!tracking) return;
-      tracking = false;
-      const touch = e.changedTouches[0];
-      const dx = touch.clientX - startX;
-      if (direction === "right" && dx > SWIPE_THRESHOLD) {
-        callback();
-      }
-      if (direction === "left" && dx < -SWIPE_THRESHOLD) {
-        callback();
-      }
-    }, { passive: true });
-  }
-
-  // Swipe right on utility drawer to close it
-  addSwipeListener(utilityDrawer, "right", () => {
-    closeUtilityDrawer();
-  });
-
-  // Swipe left on session sidebar to close it
-  const sidebarEl = document.getElementById("session-sidebar");
-  addSwipeListener(sidebarEl, "left", () => {
-    if (compactSessionSidebarQuery.matches) {
-      setSessionSidebarOpen(false);
-    }
-  });
-})();
+window.__DODO_CHAT_READY = true;

@@ -1,7 +1,16 @@
-import { jsonOutput, getCurrentSessionId, setCurrentSessionId } from "./state.js";
-import { setStatus, renderStreamingAskState } from "./render/common.js";
-import { renderAskSummary } from "./render/ask.js";
+import { getCurrentSessionId, setCurrentSessionId } from "./state.js";
 import { refreshSessions } from "./api.js";
+import {
+  appendUserMessage,
+  appendAssistantMessage,
+  updateThinkingSteps,
+  hideThinking,
+  appendStreamDelta,
+  renderFinalAnswer,
+  renderEvidenceSnippets,
+  scrollToBottom,
+  toggleWelcomeScreen,
+} from "./render/chat.js";
 
 let activeController = null;
 
@@ -52,23 +61,41 @@ export async function readEventStream(response, onEvent) {
   }
 }
 
-export async function runAskModeStream(payload) {
-  let sessionTitle = "\u65B0\u4F1A\u8BDD";
-  let streamedAnswer = "";
-  let finalPayload = null;
-  let streamError = null;
-
+export async function runChatStream(payload) {
   if (activeController) {
     activeController.abort();
   }
   const controller = new AbortController();
   activeController = controller;
 
-  try {
-    setStatus("\u6B63\u5728\u6D41\u5F0F\u751F\u6210\u56DE\u7B54...", "loading");
-    renderStreamingAskState(streamedAnswer, sessionTitle);
-    jsonOutput.textContent = JSON.stringify({ status: "streaming", question: payload.question }, null, 2);
+  toggleWelcomeScreen(false);
+  appendUserMessage(payload.question);
+  const { el, answerEl, thinkingEl } = appendAssistantMessage();
+  scrollToBottom();
 
+  let stepTimer = null;
+  const doneSteps = [];
+  stepTimer = setTimeout(() => {
+    updateThinkingSteps(thinkingEl, { activeStep: "retrieve", doneSteps });
+    stepTimer = setTimeout(() => {
+      doneSteps.push("retrieve");
+      updateThinkingSteps(thinkingEl, { activeStep: "decompose", doneSteps });
+      stepTimer = setTimeout(() => {
+        doneSteps.push("decompose");
+        updateThinkingSteps(thinkingEl, { activeStep: "generate", doneSteps });
+      }, 800);
+    }, 800);
+  }, 0);
+
+  const markCiteStep = () => {
+    clearTimeout(stepTimer);
+    updateThinkingSteps(thinkingEl, {
+      activeStep: "cite",
+      doneSteps: ["retrieve", "decompose", "generate"],
+    });
+  };
+
+  try {
     const response = await fetch("/ask-stream", {
       method: "POST",
       headers: {
@@ -83,56 +110,68 @@ export async function runAskModeStream(payload) {
       throw new Error(data.error || `\u8BF7\u6C42\u5931\u8D25\uFF1A${response.status}`);
     }
 
+    let finalPayload = null;
+    let handledError = false;
+
     await readEventStream(response, (eventType, data) => {
-      if (eventType === "session") {
-        setCurrentSessionId(data.session_id || getCurrentSessionId());
-        sessionTitle = data.session_title || sessionTitle;
-        renderStreamingAskState(streamedAnswer, sessionTitle);
+      if (eventType === "chunk") {
+        clearTimeout(stepTimer);
+        updateThinkingSteps(thinkingEl, { activeStep: "generate", doneSteps: ["retrieve", "decompose"] });
+        appendStreamDelta(el, data.delta);
+        scrollToBottom();
         return;
       }
-      if (eventType === "chunk") {
-        streamedAnswer += data.delta || "";
-        renderStreamingAskState(streamedAnswer, sessionTitle);
-        jsonOutput.textContent = JSON.stringify(
-          {
-            status: "streaming",
-            session_id: getCurrentSessionId() || undefined,
-            answer_preview: streamedAnswer,
-          },
-          null,
-          2,
-        );
+      if (eventType === "session") {
+        setCurrentSessionId(data.session_id || getCurrentSessionId());
         return;
       }
       if (eventType === "final") {
+        markCiteStep();
         finalPayload = data;
         return;
       }
       if (eventType === "error") {
-        streamError = new Error(data.error || "\u6D41\u5F0F\u8F93\u51FA\u5931\u8D25");
+        handledError = true;
+        clearTimeout(stepTimer);
+        hideThinking(thinkingEl);
+        answerEl.textContent = `错误：${data.error || "流式输出失败"}`;
+        answerEl.style.color = "var(--danger)";
+        scrollToBottom();
       }
     });
 
-    if (streamError) {
-      throw streamError;
+    if (handledError) {
+      return;
     }
     if (!finalPayload) {
       throw new Error("\u6D41\u5F0F\u8BF7\u6C42\u63D0\u524D\u7ED3\u675F\uFF0C\u672A\u6536\u5230\u6700\u7EC8\u7ED3\u679C\u3002");
     }
 
-    setStatus("\u95EE\u7B54\u5B8C\u6210", "success");
-    renderAskSummary(finalPayload);
-    jsonOutput.textContent = JSON.stringify(finalPayload, null, 2);
-    if (finalPayload.session_id) {
-      setCurrentSessionId(finalPayload.session_id);
-      await refreshSessions(finalPayload.session_id);
-    }
+    markCiteStep();
+
+    setTimeout(async () => {
+      hideThinking(thinkingEl);
+      renderFinalAnswer(el, finalPayload);
+      if (Array.isArray(finalPayload.evidence)) {
+        renderEvidenceSnippets(el, finalPayload.evidence);
+      }
+      scrollToBottom();
+      if (finalPayload.session_id) {
+        setCurrentSessionId(finalPayload.session_id);
+        await refreshSessions(finalPayload.session_id);
+      }
+    }, 50);
   } catch (error) {
     if (error.name === "AbortError") {
       return;
     }
-    throw error;
+    clearTimeout(stepTimer);
+    hideThinking(thinkingEl);
+    answerEl.textContent = `错误：${error.message || "未知错误"}`;
+    answerEl.style.color = "var(--danger)";
+    scrollToBottom();
   } finally {
+    clearTimeout(stepTimer);
     if (activeController === controller) {
       activeController = null;
     }
