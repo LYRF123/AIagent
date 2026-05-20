@@ -10,13 +10,31 @@ import {
   renderEvidenceSnippets,
   scrollToBottom,
   toggleWelcomeScreen,
+  showStreamError,
+  clearStreamError,
 } from "./render/chat.js";
 
 let activeController = null;
+let lastFinalPayload = null;
+let lastStreamQuestion = "";
+
+export function getLastFinalPayload() {
+  return lastFinalPayload;
+}
+
+export function isChatStreamActive() {
+  return Boolean(activeController);
+}
+
+export function abortChatStream() {
+  if (activeController) {
+    activeController.abort();
+  }
+}
 
 export async function readEventStream(response, onEvent) {
   if (!response.body) {
-    throw new Error("\u5F53\u524D\u6D4F\u89C8\u5668\u4E0D\u652F\u6301\u6D41\u5F0F\u54CD\u5E94\u8BFB\u53D6\u3002");
+    throw new Error("当前浏览器不支持流式响应读取。");
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8");
@@ -61,20 +79,33 @@ export async function readEventStream(response, onEvent) {
   }
 }
 
-export async function runChatStream(payload) {
+function hasPartialAnswer(answerEl) {
+  return Boolean(answerEl?.textContent?.trim());
+}
+
+function publishStreamStatus(message) {
+  const live = document.getElementById("chat-stream-status");
+  if (live) live.textContent = message || "";
+}
+
+export async function runChatStream(payload, { onError, onAbort, onRetry } = {}) {
   if (activeController) {
     activeController.abort();
   }
   const controller = new AbortController();
   activeController = controller;
+  lastStreamQuestion = payload.question || "";
 
   toggleWelcomeScreen(false);
   appendUserMessage(payload.question);
   const { el, answerEl, thinkingEl } = appendAssistantMessage();
-  scrollToBottom();
+  clearStreamError(el);
+  scrollToBottom({ smooth: true });
+  publishStreamStatus("正在连接并检索…");
 
   let stepTimer = null;
   const doneSteps = [];
+  let firstChunkReceived = false;
   stepTimer = setTimeout(() => {
     updateThinkingSteps(thinkingEl, { activeStep: "retrieve", doneSteps });
     stepTimer = setTimeout(() => {
@@ -95,6 +126,18 @@ export async function runChatStream(payload) {
     });
   };
 
+  const finishWithError = (message, hint = "") => {
+    clearTimeout(stepTimer);
+    hideThinking(thinkingEl);
+    publishStreamStatus(message);
+    const retryBtn = showStreamError(el, { message, hint });
+    if (retryBtn && typeof onRetry === "function") {
+      retryBtn.addEventListener("click", () => onRetry(), { once: true });
+    }
+    scrollToBottom({ smooth: true });
+    if (typeof onError === "function") onError(message);
+  };
+
   try {
     const response = await fetch("/ask-stream", {
       method: "POST",
@@ -106,8 +149,14 @@ export async function runChatStream(payload) {
     });
 
     if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || `\u8BF7\u6C42\u5931\u8D25\uFF1A${response.status}`);
+      let message = `请求失败：${response.status}`;
+      try {
+        const data = await response.json();
+        message = data.error || message;
+      } catch {
+        // ignore parse errors
+      }
+      throw new Error(message);
     }
 
     let finalPayload = null;
@@ -116,7 +165,14 @@ export async function runChatStream(payload) {
     await readEventStream(response, (eventType, data) => {
       if (eventType === "chunk") {
         clearTimeout(stepTimer);
-        updateThinkingSteps(thinkingEl, { activeStep: "generate", doneSteps: ["retrieve", "decompose"] });
+        publishStreamStatus("正在生成回答…");
+        if (!firstChunkReceived) {
+          firstChunkReceived = true;
+          updateThinkingSteps(thinkingEl, { activeStep: "decompose", doneSteps: ["retrieve"] });
+          setTimeout(() => {
+            updateThinkingSteps(thinkingEl, { activeStep: "generate", doneSteps: ["retrieve", "decompose"] });
+          }, 250);
+        }
         appendStreamDelta(el, data.delta);
         scrollToBottom();
         return;
@@ -128,15 +184,12 @@ export async function runChatStream(payload) {
       if (eventType === "final") {
         markCiteStep();
         finalPayload = data;
+        lastFinalPayload = data;
         return;
       }
       if (eventType === "error") {
         handledError = true;
-        clearTimeout(stepTimer);
-        hideThinking(thinkingEl);
-        answerEl.textContent = `错误：${data.error || "流式输出失败"}`;
-        answerEl.style.color = "var(--danger)";
-        scrollToBottom();
+        finishWithError(data.error || "流式输出失败", "可检查模型配置或网络后重试。");
       }
     });
 
@@ -144,36 +197,56 @@ export async function runChatStream(payload) {
       return;
     }
     if (!finalPayload) {
-      throw new Error("\u6D41\u5F0F\u8BF7\u6C42\u63D0\u524D\u7ED3\u675F\uFF0C\u672A\u6536\u5230\u6700\u7EC8\u7ED3\u679C\u3002");
+      throw new Error("连接已断开，未收到完整回答。");
     }
 
     markCiteStep();
+    publishStreamStatus("正在整理引用…");
 
-    setTimeout(async () => {
-      hideThinking(thinkingEl);
-      renderFinalAnswer(el, finalPayload);
-      if (Array.isArray(finalPayload.evidence)) {
-        renderEvidenceSnippets(el, finalPayload.evidence);
-      }
-      scrollToBottom();
-      if (finalPayload.session_id) {
-        setCurrentSessionId(finalPayload.session_id);
-        await refreshSessions(finalPayload.session_id);
-      }
-    }, 50);
+    await new Promise((resolve) => {
+      setTimeout(resolve, 600);
+    });
+
+    hideThinking(thinkingEl);
+    renderFinalAnswer(el, finalPayload);
+    if (Array.isArray(finalPayload.evidence)) {
+      renderEvidenceSnippets(el, finalPayload.evidence);
+    }
+    scrollToBottom({ smooth: true });
+    publishStreamStatus("");
+    if (finalPayload.session_id) {
+      setCurrentSessionId(finalPayload.session_id);
+      await refreshSessions(finalPayload.session_id);
+    }
   } catch (error) {
     if (error.name === "AbortError") {
+      clearTimeout(stepTimer);
+      hideThinking(thinkingEl);
+      const partial = hasPartialAnswer(answerEl);
+      const message = partial ? "已停止生成" : "已取消请求";
+      publishStreamStatus(message);
+      if (!partial) {
+        finishWithError(message, "你可以修改问题后重新发送。");
+      } else {
+        const note = document.createElement("p");
+        note.className = "chat-stream-stopped-note";
+        note.textContent = message;
+        el.appendChild(note);
+        scrollToBottom({ smooth: true });
+      }
+      if (typeof onAbort === "function") onAbort();
       return;
     }
-    clearTimeout(stepTimer);
-    hideThinking(thinkingEl);
-    answerEl.textContent = `错误：${error.message || "未知错误"}`;
-    answerEl.style.color = "var(--danger)";
-    scrollToBottom();
+    finishWithError(error.message || "未知错误", "请确认后端已启动，或稍后再试。");
   } finally {
     clearTimeout(stepTimer);
     if (activeController === controller) {
       activeController = null;
     }
+    publishStreamStatus("");
   }
+}
+
+export function getLastStreamQuestion() {
+  return lastStreamQuestion;
 }

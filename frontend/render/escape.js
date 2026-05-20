@@ -200,41 +200,38 @@ export function normalizeStageKey(value) {
   return formatFieldValue(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
 }
 
+function applyInlineFormatting(escapedHtml) {
+  let result = escapedHtml;
+  result = result.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  result = result.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+  return result;
+}
+
 export function renderSimpleMarkdown(text, evidenceCount = 0, evidence = []) {
   if (!hasValue(text)) {
     return "";
   }
-  let html = escapeHtml(String(text));
+  const rawText = String(text);
 
-  // Bold: **text**
-  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-
-  // Inline code: `code`
-  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
-
-  // Paragraphs: split on double newline
-  const blocks = html.split(/\n{2,}/);
-  html = blocks
+  const blocks = rawText.split(/\n{2,}/);
+  let html = blocks
     .map((block) => {
       const trimmed = block.trim();
       if (!trimmed) return "";
-      // List block: consecutive lines starting with "- "
       const lines = trimmed.split("\n");
       const isListBlock = lines.every((l) => l.trimStart().startsWith("- ") || l.trim() === "");
       if (isListBlock) {
         const items = lines
           .filter((l) => l.trimStart().startsWith("- "))
-          .map((l) => `<li>${l.trimStart().slice(2)}</li>`)
+          .map((l) => `<li>${applyInlineFormatting(escapeHtml(l.trimStart().slice(2)))}</li>`)
           .join("");
         return `<ul class="md-list">${items}</ul>`;
       }
-      // Regular paragraph
-      return `<p>${trimmed.replace(/\n/g, "<br>")}</p>`;
+      return `<p>${applyInlineFormatting(escapeHtml(trimmed)).replace(/\n/g, "<br>")}</p>`;
     })
     .filter(Boolean)
     .join("");
 
-  // Citation chips: [N] → clickable buttons (same as renderTextWithCitationChips)
   html = html.replace(/\[(\d+)\]/g, (match, number) => {
     const num = Number(number);
     const isMatched = num >= 1 && num <= evidenceCount;

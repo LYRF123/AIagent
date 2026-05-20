@@ -76,6 +76,126 @@ export async function listDocuments() {
   return data;
 }
 
+export async function deleteDocument(paperId) {
+  const response = await fetch("/delete-document", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ paper_id: paperId }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Delete failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function listKnowledgeDocuments({ includeBase = true } = {}) {
+  const response = await fetch(`/knowledge-documents?include_base=${includeBase ? "true" : "false"}`);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || `Knowledge list failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function getDocumentDetail(paperId, { passageLimit = 12 } = {}) {
+  const response = await fetch(`/documents/${encodeURIComponent(paperId)}?passage_limit=${encodeURIComponent(String(passageLimit))}`);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Document detail failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function getDocumentBrief(paperId) {
+  const response = await fetch(`/documents/${encodeURIComponent(paperId)}/brief`);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Document brief failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function runRagLab(payload = {}) {
+  const response = await fetch("/rag-lab/evaluate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `RAG Lab failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function runDeepReview(payload = {}) {
+  const response = await fetch("/deep-review", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Review failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function getRuntimeStatus() {
+  const response = await fetch("/status");
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Status failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function getModelSettings() {
+  const response = await fetch("/settings/model");
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Model settings failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function updateModelSettings(payload) {
+  const response = await fetch("/settings/model", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Model settings update failed: ${response.status}`);
+  }
+  return data;
+}
+
+export async function listAvailableModels(payload) {
+  const response = await fetch("/settings/models/list", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || data.detail || `Model list failed: ${response.status}`);
+  }
+  return data;
+}
+
 export async function deleteSession(sessionId) {
   try {
     const response = await fetch("/delete-session", {
