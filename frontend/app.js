@@ -177,6 +177,7 @@ function ensureSettingsPanel() {
           </div>
           <button id="settings-close" class="settings-close" type="button" aria-label="关闭设置">×</button>
         </div>
+        <div class="settings-scroll">
         <div class="settings-section">
           <h3>模型配置</h3>
           <div class="settings-grid">
@@ -231,13 +232,17 @@ function ensureSettingsPanel() {
             <span>启用重排 (Rerank)</span>
           </label>
         </div>
-        <div class="settings-actions">
-          <button id="settings-save" class="primary-button compact-button" type="button">应用</button>
-          <button id="settings-refresh-docs" class="ghost-button compact-button" type="button">刷新文档</button>
-        </div>
         <div class="settings-section">
           <h3>已导入文档</h3>
-          <div id="settings-documents" class="settings-documents"></div>
+          <div id="settings-documents" class="settings-documents">
+            <p class="settings-empty">点击刷新文档查看列表。</p>
+          </div>
+        </div>
+        </div>
+        <div class="settings-footer settings-actions">
+          <button id="settings-save" class="primary-button compact-button" type="button">保存并应用</button>
+          <button id="settings-refresh-docs" class="ghost-button compact-button" type="button">刷新文档</button>
+          <p class="settings-footer-hint">填写「配置名称」后保存，会出现在「已保存模型」列表</p>
         </div>
       </div>
     `;
@@ -371,6 +376,17 @@ function ensureSettingsPanel() {
     const apiKey = panel.querySelector("#settings-api-key").value.trim();
     const baseUrl = panel.querySelector("#settings-base-url").value.trim();
     const model = getSelectedModel(panel);
+    const statusEl = document.getElementById("settings-model-status");
+
+    if ((apiKey || model) && !profileName) {
+      if (statusEl) {
+        statusEl.textContent = "请先填写配置名称，便于在「已保存模型」中识别";
+        statusEl.className = "settings-model-status status-warn";
+      }
+      showToast("请先填写配置名称", "error");
+      panel.querySelector("#settings-profile-name")?.focus();
+      return;
+    }
 
     appSettings = saveSettings({
       topK,
@@ -385,7 +401,6 @@ function ensureSettingsPanel() {
 
     // If API key provided, update backend
     if (apiKey || model) {
-      const statusEl = document.getElementById("settings-model-status");
       try {
         const result = await updateModelSettings({ provider, api_key: apiKey, base_url: baseUrl, model, name: profileName });
         appSettings = saveSettings({
@@ -402,7 +417,7 @@ function ensureSettingsPanel() {
           statusEl.textContent = `已连接 · ${result.model}${result.chat_enabled ? "" : " (Key 无效)"}`;
           statusEl.className = "settings-model-status " + (result.chat_enabled ? "status-ok" : "status-warn");
         }
-        showToast(`模型配置已更新：${result.model}`, "success");
+        showToast(`已保存并应用：${profileName || result.model}`, "success");
       } catch (err) {
         if (statusEl) {
           statusEl.textContent = "连接失败: " + (err.message || "未知错误");

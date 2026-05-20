@@ -1489,15 +1489,46 @@ button:disabled {
 }
 
 .settings-card {
+  display: flex;
+  flex-direction: column;
   width: min(560px, 100%);
   max-height: min(680px, calc(100vh - 36px));
-  overflow: auto;
-  padding: 18px;
+  overflow: hidden;
+  padding: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow);
   animation: settingsSlideIn 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 18px 12px;
+}
+
+.settings-card > .settings-head {
+  flex: none;
+  padding: 18px 18px 0;
+  margin-bottom: 12px;
+}
+
+.settings-footer {
+  flex: none;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: 0 -8px 16px rgba(31, 38, 31, 0.06);
+}
+
+.settings-footer-hint {
+  flex: 1 1 100%;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
 .settings-panel.settings-panel-closing .settings-card {
@@ -1635,8 +1666,15 @@ button:disabled {
 
 .settings-actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 0;
+}
+
+.settings-footer.settings-actions #settings-save {
+  flex: 1 1 auto;
+  min-width: 140px;
 }
 
 .settings-subhead {

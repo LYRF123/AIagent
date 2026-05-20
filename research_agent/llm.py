@@ -1,11 +1,11 @@
 ﻿from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
-from urllib import error, request
+import httpx
+import re
 from urllib.parse import urlparse
 
 from langchain_core.embeddings import Embeddings
@@ -83,6 +83,42 @@ def _validate_rerank_url(url: str) -> None:
         raise ValueError(f"Rerank URL host '{host}' is not in the allowed list: {_ALLOWED_RERANK_HOSTS}")
 
 
+def normalize_openai_base_url(base_url: str) -> str:
+    """Strip trailing slashes and collapse accidental repeated ``/v1`` suffixes."""
+    cleaned = (base_url or "").strip().rstrip("/")
+    if not cleaned:
+        return cleaned
+    return re.sub(r"(?:/v1)+$", "/v1", cleaned)
+
+
+def format_chat_http_error(status_code: int, detail: str, base_url: str) -> str:
+    endpoint = f"{normalize_openai_base_url(base_url)}/chat/completions"
+    detail_short = (detail or "").strip()
+    if len(detail_short) > 280:
+        detail_short = detail_short[:280] + "..."
+    hints = {
+        401: "API Key 无效或未授权，请检查设置中的 Key。",
+        403: "当前 Key 无权访问该接口。",
+        404: (
+            f"接口不存在（{endpoint}）。请确认 Base URL 以 /v1 结尾，"
+            "且未重复拼接 /v1 或 /chat/completions。"
+        ),
+        429: "请求过于频繁，请稍后重试。",
+        502: "上游网关异常（502），请稍后重试或联系服务提供方。",
+        503: (
+            "上游 Chat 服务暂时不可用（503）。Base URL 与 Key 通常正确，"
+            "但 /chat/completions 当前无法处理请求；请在服务商面板检查配额/负载，"
+            "或稍后重试、更换模型。"
+        ),
+    }
+    message = f"Chat completion HTTP {status_code}"
+    if hint := hints.get(status_code):
+        message = f"{message}: {hint}"
+    if detail_short:
+        message = f"{message} 详情: {detail_short}"
+    return message
+
+
 class DashScopeEmbeddings(Embeddings):
     def __init__(
         self,
@@ -123,7 +159,8 @@ class DashScopeLangChainClient:
         timeout: int = 60,
     ) -> None:
         self.api_key = resolve_setting("DASHSCOPE_API_KEY", explicit=api_key)
-        self.base_url = (resolve_setting("DASHSCOPE_BASE_URL", explicit=base_url, default=DEFAULT_DASHSCOPE_BASE_URL) or DEFAULT_DASHSCOPE_BASE_URL).rstrip("/")
+        resolved_base = resolve_setting("DASHSCOPE_BASE_URL", explicit=base_url, default=DEFAULT_DASHSCOPE_BASE_URL) or DEFAULT_DASHSCOPE_BASE_URL
+        self.base_url = normalize_openai_base_url(resolved_base)
         self.model = resolve_setting("DASHSCOPE_MODEL", explicit=model, default=DEFAULT_DASHSCOPE_MODEL) or DEFAULT_DASHSCOPE_MODEL
         self.embedding_model = resolve_setting("DASHSCOPE_EMBEDDING_MODEL", explicit=embedding_model, default=DEFAULT_DASHSCOPE_EMBEDDING_MODEL) or DEFAULT_DASHSCOPE_EMBEDDING_MODEL
         self.rerank_model = resolve_setting("DASHSCOPE_RERANK_MODEL", explicit=rerank_model, default=DEFAULT_DASHSCOPE_RERANK_MODEL) or DEFAULT_DASHSCOPE_RERANK_MODEL
@@ -131,6 +168,7 @@ class DashScopeLangChainClient:
         self.timeout = timeout
         self._chat_models: dict[float, ChatOpenAI] = {}
         self._embedding_model: DashScopeEmbeddings | None = None
+        self.usage_tracker = UsageTracker()
 
     @property
     def enabled(self) -> bool:
@@ -154,6 +192,13 @@ class DashScopeLangChainClient:
                 timeout=self.timeout,
             )
         return self._openai_client_cache
+
+    @property
+    def _http_client(self) -> httpx.Client:
+        """Lazy httpx client for raw API calls."""
+        if not hasattr(self, '_http_client_cache'):
+            self._http_client_cache = httpx.Client(timeout=self.timeout)
+        return self._http_client_cache
 
     def chat_model(self, temperature: float = 0.2) -> ChatOpenAI:
         if not self.api_key:
@@ -195,6 +240,8 @@ class DashScopeLangChainClient:
     def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> LLMResponse:
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        import time as _time
+        _start = _time.perf_counter()
         payload = {
             "model": self.model,
             "messages": [
@@ -203,33 +250,42 @@ class DashScopeLangChainClient:
             ],
             "temperature": temperature,
         }
-        req = request.Request(
-            f"{self.base_url}/chat/completions",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0 ResearchAgent/1.0",
-            },
-            method="POST",
-        )
         try:
-            with request.urlopen(req, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Chat completion HTTP {exc.code}: {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"Chat completion connection failed: {exc.reason}") from exc
+            response = self._http_client.post(
+                f"{self.base_url}/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "Mozilla/5.0 ResearchAgent/1.0",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            self.usage_tracker.record("complete", self.model, (_time.perf_counter() - _start) * 1000, error=str(exc))
+            detail = exc.response.text
+            raise RuntimeError(
+                format_chat_http_error(exc.response.status_code, detail, self.base_url)
+            ) from exc
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            self.usage_tracker.record("complete", self.model, (_time.perf_counter() - _start) * 1000, error=str(exc))
+            raise RuntimeError(f"Chat completion connection failed: {exc}") from exc
         choices = data.get("choices") or []
         message = (choices[0] or {}).get("message") if choices else {}
         text = self._normalize_content((message or {}).get("content", "")).strip()
+        _elapsed = (_time.perf_counter() - _start) * 1000
+        _est_tokens = len(user_prompt.split()) + len(text.split())
+        self.usage_tracker.record("complete", self.model, _elapsed, _est_tokens)
         return LLMResponse(text=text, model=self.model, provider="dashscope")
 
     def stream_complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> Iterator[str]:
         """True SSE streaming via DashScope OpenAI-compatible API."""
         if not self.api_key:
             raise RuntimeError("DASHSCOPE_API_KEY is not configured")
+        import time as _time
+        _start = _time.perf_counter()
+        _chunks: list[str] = []
         try:
             response = self._openai_client.chat.completions.create(
                 model=self.model,
@@ -245,11 +301,19 @@ class DashScopeLangChainClient:
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content:
+                    _chunks.append(delta.content)
                     yield delta.content
                 # Check for finish_reason stop sentinel
                 if chunk.choices[0].finish_reason is not None:
                     break
+            _elapsed = (_time.perf_counter() - _start) * 1000
+            _full_text = "".join(_chunks)
+            _est_tokens = len(user_prompt.split()) + len(_full_text.split())
+            self.usage_tracker.record("stream_complete", self.model, _elapsed, _est_tokens)
+        except RuntimeError:
+            raise
         except Exception as exc:
+            self.usage_tracker.record("stream_complete", self.model, (_time.perf_counter() - _start) * 1000, error=str(exc))
             raise RuntimeError(f"Stream completion failed: {exc}") from exc
 
     def rerank(self, query: str, documents: list[str], top_n: int | None = None) -> list[RerankItem]:
@@ -260,6 +324,8 @@ class DashScopeLangChainClient:
         _validate_rerank_url(self.rerank_url)
         if not documents:
             return []
+        import time as _time
+        _start = _time.perf_counter()
         payload = {
             "model": self.rerank_model,
             "input": {
@@ -271,23 +337,24 @@ class DashScopeLangChainClient:
                 "top_n": top_n or len(documents),
             },
         }
-        req = request.Request(
-            self.rerank_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
         try:
-            with request.urlopen(req, timeout=self.timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"DashScope rerank HTTP {exc.code}: {detail}") from exc
-        except error.URLError as exc:
-            raise RuntimeError(f"DashScope rerank connection failed: {exc.reason}") from exc
+            response = self._http_client.post(
+                self.rerank_url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            self.usage_tracker.record("rerank", self.rerank_model, (_time.perf_counter() - _start) * 1000, error=str(exc))
+            detail = exc.response.text
+            raise RuntimeError(f"DashScope rerank HTTP {exc.response.status_code}: {detail}") from exc
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            self.usage_tracker.record("rerank", self.rerank_model, (_time.perf_counter() - _start) * 1000, error=str(exc))
+            raise RuntimeError(f"DashScope rerank connection failed: {exc}") from exc
 
         results = (data.get("output") or {}).get("results") or []
         reranked: list[RerankItem] = []
@@ -300,7 +367,75 @@ class DashScopeLangChainClient:
                     document=str(document.get("text", "")),
                 )
             )
+        self.usage_tracker.record("rerank", self.rerank_model, (_time.perf_counter() - _start) * 1000, len(documents))
         return reranked
+
+
+import threading
+from collections import deque
+
+
+class UsageRecord:
+    __slots__ = ("timestamp", "method", "model", "latency_ms", "estimated_tokens", "error")
+
+    def __init__(self, timestamp: float, method: str, model: str, latency_ms: float, estimated_tokens: int = 0, error: str = "") -> None:
+        self.timestamp = timestamp
+        self.method = method
+        self.model = model
+        self.latency_ms = latency_ms
+        self.estimated_tokens = estimated_tokens
+        self.error = error
+
+    def to_dict(self) -> dict:
+        return {
+            "timestamp": self.timestamp,
+            "method": self.method,
+            "model": self.model,
+            "latency_ms": round(self.latency_ms, 1),
+            "estimated_tokens": self.estimated_tokens,
+            "error": self.error,
+        }
+
+
+class UsageTracker:
+    """Track API usage across all LLM client methods."""
+
+    def __init__(self, max_records: int = 500) -> None:
+        self._lock = threading.Lock()
+        self.records: deque[UsageRecord] = deque(maxlen=max_records)
+        self._total_calls = 0
+        self._total_errors = 0
+        self._total_tokens = 0
+        self._total_latency_ms = 0.0
+
+    def record(self, method: str, model: str, latency_ms: float, estimated_tokens: int = 0, error: str = "") -> None:
+        import time
+        rec = UsageRecord(
+            timestamp=time.time(),
+            method=method,
+            model=model,
+            latency_ms=latency_ms,
+            estimated_tokens=estimated_tokens,
+            error=error,
+        )
+        with self._lock:
+            self.records.append(rec)
+            self._total_calls += 1
+            self._total_latency_ms += latency_ms
+            self._total_tokens += estimated_tokens
+            if error:
+                self._total_errors += 1
+
+    def summary(self) -> dict:
+        with self._lock:
+            return {
+                "total_calls": self._total_calls,
+                "total_errors": self._total_errors,
+                "total_estimated_tokens": self._total_tokens,
+                "total_latency_ms": round(self._total_latency_ms, 1),
+                "avg_latency_ms": round(self._total_latency_ms / max(self._total_calls, 1), 1),
+                "recent_records": [r.to_dict() for r in self.records],
+            }
 
 
 def build_context_block(evidence: list[dict[str, Any]]) -> str:

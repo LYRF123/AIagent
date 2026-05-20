@@ -236,6 +236,7 @@
           </div>
           <button id="settings-close" class="settings-close" type="button" aria-label="关闭设置">×</button>
         </div>
+        <div class="settings-scroll">
         <div class="settings-section">
           <h3>模型配置</h3>
           <div class="settings-grid">
@@ -290,15 +291,17 @@
             <span>启用重排 (Rerank)</span>
           </label>
         </div>
-        <div class="settings-actions">
-          <button id="settings-save" class="primary-button compact-button" type="button">应用</button>
-          <button id="settings-refresh-docs" class="ghost-button compact-button" type="button">刷新文档</button>
-        </div>
         <div class="settings-section">
           <h3>已导入文档</h3>
           <div id="settings-documents" class="settings-documents">
             <p class="settings-empty">点击刷新文档查看列表。</p>
           </div>
+        </div>
+        </div>
+        <div class="settings-footer settings-actions">
+          <button id="settings-save" class="primary-button compact-button" type="button">保存并应用</button>
+          <button id="settings-refresh-docs" class="ghost-button compact-button" type="button">刷新文档</button>
+          <p class="settings-footer-hint">填写「配置名称」后保存，会出现在「已保存模型」列表</p>
         </div>
       </div>
     </div>
