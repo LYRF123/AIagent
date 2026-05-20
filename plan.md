@@ -8,7 +8,7 @@
 |------|------|------|
 | 侧栏 | 会话与工具入口 | 新建对话、历史、导入文档、设置；「工作台」为次级入口 |
 | 主栏 | 流式问答 | `/ask-stream` SSE、思考步骤动画、证据折叠、引用跳转 |
-| 工作台侧板 | 深度能力 | 证据链 / 知识库 / RAG Lab / 阅读 / 综述 / 状态（`workspace.js`） |
+| 工作台侧板 | 深度能力 | Tab：`evidence` 证据 · `documents` 知识库 · `lab` RAG Lab · `reading` 阅读 · `review` 综述 · `status` 状态（`workspace.js`） |
 | 设置弹层 | 模型与检索 | 多配置档案、Top K、严格证据、重排 |
 
 窄屏（≤768px）：侧栏 overlay；工作台全屏抽屉。中屏（769–1180px）：工作台右侧滑出。
@@ -79,6 +79,7 @@
 | `frontend/state.js` | 会话/设置/ DOM 引用 |
 | `frontend/api.js` | REST 封装 |
 | `frontend/confirm.js` | 确认弹层 |
+| `frontend/handlers/sidebar.js` | 侧栏开合、窄屏 overlay、localStorage 记忆 |
 
 ---
 

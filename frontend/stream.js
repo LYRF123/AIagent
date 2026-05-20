@@ -54,7 +54,14 @@ export async function readEventStream(response, onEvent) {
       }
     });
     const rawData = dataLines.join("\n");
-    const parsed = rawData ? JSON.parse(rawData) : {};
+    let parsed = {};
+    if (rawData) {
+      try {
+        parsed = JSON.parse(rawData);
+      } catch {
+        throw new Error("流式数据格式异常，请重试。");
+      }
+    }
     onEvent(eventType, parsed);
   }
 
