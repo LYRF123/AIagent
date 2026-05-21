@@ -1,0 +1,41 @@
+[project]
+name = "daidainiao-agent"
+version = "0.3.0"
+description = "呆呆鸟论文助手：LangChain、FAISS、DashScope 与本地文档导入"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi~=0.136",
+  "faiss-cpu>=1.13.2",
+  "httpx>=0.28.1",
+  "langchain-community>=0.4.1",
+  "langchain-openai~=1.2",
+  "numpy>=1.26.4,<2",
+  "openai~=2.33",
+  "pydantic>=2.12.5",
+  "pypdf>=6.8.0",
+  "python-docx>=1.2.0",
+  "ragas>=0.4,<0.5",
+  "scikit-learn~=1.8",
+  "uvicorn[standard]>=0.41.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest~=9.0",
+]
+
+[project.scripts]
+daidainiao-agent = "daidainiao_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = [
+  "daidainiao_agent*"
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
+testpaths = [
+  "tests"
+]
