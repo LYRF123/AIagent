@@ -29,7 +29,19 @@ const THINKING_HTML = `
 </div>`;
 
 export function appendUserMessage(text) {
-  const html = `<div class="chat-msg chat-msg-user"><p>${escapeHtml(text)}</p></div>`;
+  const html = `<div class="chat-msg chat-msg-user">
+    <div class="chat-msg-user-actions">
+      <button type="button" class="chat-msg-action-btn" data-action="edit" title="编辑">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.013 1.427a1.75 1.75 0 012.474 2.474L4.81 12.578a1 1 0 01-.413.242l-2.75.917a.25.25 0 01-.316-.316l.917-2.75a1 1 0 01.242-.413L11.013 1.427z" fill="currentColor"/></svg>
+        编辑
+      </button>
+      <button type="button" class="chat-msg-action-btn" data-action="retry" title="重试">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8A6.5 6.5 0 118 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M1 5v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        重试
+      </button>
+    </div>
+    <p>${escapeHtml(text)}</p>
+  </div>`;
   chatMessages.insertAdjacentHTML("beforeend", html);
   return chatMessages.lastElementChild;
 }
@@ -228,6 +240,110 @@ export function renderSessionHistory(messages) {
       renderEvidenceSnippets(el, msg.evidence);
     }
     bindCitationClicks(el);
+  });
+}
+
+export function bindUserMessageActions(onRetry) {
+  if (!chatMessages) return;
+  chatMessages.addEventListener("click", (event) => {
+    const btn = event.target.closest(".chat-msg-action-btn");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const msgEl = btn.closest(".chat-msg-user");
+    if (!msgEl) return;
+
+    const p = msgEl.querySelector("p");
+    const ta = msgEl.querySelector("textarea");
+
+    if (action === "retry") {
+      const text = p?.textContent?.trim() || "";
+      if (!text) return;
+      // Find the index of this user message
+      const userMsgs = Array.from(chatMessages.querySelectorAll(".chat-msg-user"));
+      const index = userMsgs.indexOf(msgEl);
+      onRetry(text, index, false);
+    } else if (action === "edit") {
+      if (msgEl.classList.contains("is-editing")) return;
+      const text = p?.textContent?.trim() || "";
+      msgEl.classList.add("is-editing");
+
+      // Replace p with textarea
+      const newTa = document.createElement("textarea");
+      newTa.className = "chat-msg-edit-input";
+      newTa.value = text;
+      newTa.dataset.original = text;
+      newTa.rows = Math.min(8, text.split("\n").length + 1);
+      p.replaceWith(newTa);
+      newTa.focus();
+      newTa.selectionStart = newTa.selectionEnd = newTa.value.length;
+
+      // Update actions to confirm/cancel
+      const actions = msgEl.querySelector(".chat-msg-user-actions");
+      actions.innerHTML = `
+        <button type="button" class="chat-msg-action-btn chat-msg-action-confirm" data-action="confirm" title="发送">发送</button>
+        <button type="button" class="chat-msg-action-btn" data-action="cancel" title="取消">取消</button>
+      `;
+
+      // Keydown on textarea
+      newTa.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          const confirmBtn = msgEl.querySelector('[data-action="confirm"]');
+          confirmBtn?.click();
+        }
+        if (e.key === "Escape") {
+          const cancelBtn = msgEl.querySelector('[data-action="cancel"]');
+          cancelBtn?.click();
+        }
+      });
+    } else if (action === "cancel") {
+      if (!msgEl.classList.contains("is-editing")) return;
+      msgEl.classList.remove("is-editing");
+
+      const originalText = ta?.dataset.original || "";
+      const newP = document.createElement("p");
+      newP.textContent = originalText;
+      ta.replaceWith(newP);
+
+      // Restore actions
+      const actions = msgEl.querySelector(".chat-msg-user-actions");
+      actions.innerHTML = `
+        <button type="button" class="chat-msg-action-btn" data-action="edit" title="编辑">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.013 1.427a1.75 1.75 0 012.474 2.474L4.81 12.578a1 1 0 01-.413.242l-2.75.917a.25.25 0 01-.316-.316l.917-2.75a1 1 0 01.242-.413L11.013 1.427z" fill="currentColor"/></svg>
+          编辑
+        </button>
+        <button type="button" class="chat-msg-action-btn" data-action="retry" title="重试">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8A6.5 6.5 0 118 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M1 5v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          重试
+        </button>
+      `;
+    } else if (action === "confirm") {
+      if (!msgEl.classList.contains("is-editing")) return;
+      const newText = ta?.value?.trim() || "";
+      if (!newText) return;
+
+      msgEl.classList.remove("is-editing");
+      const newP = document.createElement("p");
+      newP.textContent = newText;
+      ta.replaceWith(newP);
+
+      // Restore actions
+      const actions = msgEl.querySelector(".chat-msg-user-actions");
+      actions.innerHTML = `
+        <button type="button" class="chat-msg-action-btn" data-action="edit" title="编辑">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.013 1.427a1.75 1.75 0 012.474 2.474L4.81 12.578a1 1 0 01-.413.242l-2.75.917a.25.25 0 01-.316-.316l.917-2.75a1 1 0 01.242-.413L11.013 1.427z" fill="currentColor"/></svg>
+          编辑
+        </button>
+        <button type="button" class="chat-msg-action-btn" data-action="retry" title="重试">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8A6.5 6.5 0 118 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M1 5v3h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          重试
+        </button>
+      `;
+
+      const userMsgs = Array.from(chatMessages.querySelectorAll(".chat-msg-user"));
+      const index = userMsgs.indexOf(msgEl);
+      onRetry(newText, index, true);
+    }
   });
 }
 

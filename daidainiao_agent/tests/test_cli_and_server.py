@@ -75,6 +75,7 @@ def test_update_model_settings_can_reuse_existing_api_key(monkeypatch, tmp_path)
 
     monkeypatch.setattr(fastapi_server, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(fastapi_server, "MODEL_PROFILES_PATH", tmp_path / "data" / "model_profiles.json")
+    monkeypatch.setattr(fastapi_server, "ENV_PATH", tmp_path / ".env")
     monkeypatch.setattr(fastapi_server, "get_app", lambda: DummyApp())
 
     fastapi_server._rate_limits.clear()
@@ -124,6 +125,7 @@ def test_update_model_settings_can_switch_saved_profile(monkeypatch, tmp_path) -
 
     monkeypatch.setattr(fastapi_server, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(fastapi_server, "MODEL_PROFILES_PATH", tmp_path / "data" / "model_profiles.json")
+    monkeypatch.setattr(fastapi_server, "ENV_PATH", tmp_path / ".env")
     monkeypatch.setattr(fastapi_server, "get_app", lambda: DummyApp())
 
     fastapi_server._rate_limits.clear()
@@ -176,6 +178,7 @@ def test_update_model_settings_keeps_each_saved_profile(monkeypatch, tmp_path) -
 
     monkeypatch.setattr(fastapi_server, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(fastapi_server, "MODEL_PROFILES_PATH", tmp_path / "data" / "model_profiles.json")
+    monkeypatch.setattr(fastapi_server, "ENV_PATH", tmp_path / ".env")
     monkeypatch.setattr(fastapi_server, "get_app", lambda: DummyApp())
 
     payload = {

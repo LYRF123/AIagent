@@ -49,6 +49,10 @@
 - [x] 证据片段折叠、引用 chip 跳转、检索链路 details
 - [x] 产品工作台侧板（`workspace.js`）：证据 / 知识库 / RAG Lab / 阅读 / 综述 / 状态
 - [x] 设置：模型档案、Top K、严格证据、重排、文档列表
+- [x] 模型档案后端持久化（`model_profiles.py` + `GET/POST /settings/model`）
+- [x] 设置内删除已导入文档；导入成功 5 秒可关提示
+- [x] 会话消息截断 API（`POST /sessions/{id}/truncate`）
+- [x] 多页 PDF 证据按 `(paper_id, section, locator)` 去重展示
 - [x] 流式错误/中断：状态条、错误条、重试、停止按钮、Toast
 - [x] 确认对话框（`confirm.js`）用于清空/删除会话
 - [x] 欢迎屏快捷提问 chips
@@ -85,6 +89,6 @@
 
 ## 验证
 
-1. 启动：`python -m daidainiao_agent.server`（或 FastAPI 入口）
+1. 启动：`python -m daidainiao_agent.cli serve`
 2. 打开 `http://localhost:8000`
 3. 检查：提问 → 思考动画 → 流式文字 → 证据折叠；断网/停生成 → 错误条或停止提示；侧栏历史；工作台 Tab；设置保存；窄屏侧栏与抽屉

@@ -279,12 +279,15 @@ class AnswerGenerator:
             ),
         )
         selected: list[Evidence] = []
-        seen_pairs: set[tuple[str, str]] = set()
+        seen_pairs: set[tuple] = set()
         paper_order: list[str] = []
         for item in ranked:
             if item.paper_id not in paper_order and len(paper_order) >= max_papers:
                 continue
-            key = (item.paper_id, item.section)
+            # 对于来自同一文档不同页的片段（section 相同但 locator 不同），
+            # 用 (paper_id, section, locator) 作为去重 key，避免多页 PDF 只展示 1 条。
+            locator_key = item.locator or item.text[:40]
+            key: tuple = (item.paper_id, item.section, locator_key)
             if key in seen_pairs:
                 continue
             selected.append(item)

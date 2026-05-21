@@ -87,3 +87,6 @@ class ResearchApp:
             return
 
         raise RuntimeError("ask stream finished without a final payload")
+
+    def truncate_session(self, session_id: str, message_index: int) -> SessionDetail:
+        return self.session_store.truncate_session(session_id, message_index)

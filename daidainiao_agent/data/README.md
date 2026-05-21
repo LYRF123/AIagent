@@ -13,3 +13,5 @@
 | `sessions.json` | 多轮会话记录 |
 
 首次克隆后执行 `pip install -e .`，通过 Web 或 CLI 导入文档即可自动生成上述文件。
+
+`model_profiles.json` 支持数组或 `{ "active_profile_id", "profiles" }` 两种格式；服务启动后会按当前 `.env` 中的模型自动匹配「当前」档案。

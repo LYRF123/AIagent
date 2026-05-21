@@ -18,6 +18,13 @@ from .agent import ResearchAssistant
 from .evaluation import default_eval_path, run_evaluation
 from .rag_lab import run_rag_lab_evaluation
 from .server import import_saved_document
+from .model_profiles import (
+    apply_model_settings,
+    find_profile,
+    load_profile_store,
+    public_profile,
+    resolve_active_profile_id,
+)
 
 CORPUS_PATH = os.getenv("DAIDAINIAO_AGENT_CORPUS") or os.getenv("RESEARCH_AGENT_CORPUS")
 EVAL_PATH = os.getenv("DAIDAINIAO_AGENT_EVAL_PATH") or os.getenv("RESEARCH_AGENT_EVAL_PATH")
@@ -26,6 +33,8 @@ FRONTEND_DIR = PROJECT_ROOT / "frontend"
 INDEX_FILE = FRONTEND_DIR / "index.html"
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_PROFILES_PATH = PROJECT_ROOT / "data" / "model_profiles.json"
+ENV_PATH = PROJECT_ROOT / ".env"
 
 _app_instance = None
 
@@ -95,6 +104,57 @@ def list_documents():
     return {"items": get_app().agent.list_imported_documents()}
 
 
+@app.get("/knowledge-documents")
+def list_knowledge_documents(include_base: bool = True):
+    return {"items": get_app().agent.list_knowledge_documents(include_base=include_base)}
+
+
+@app.get("/documents/{paper_id}/brief")
+def get_document_brief(paper_id: str):
+    try:
+        return get_app().agent.build_reading_brief(paper_id)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/documents/{paper_id}")
+def get_document_detail(paper_id: str, passage_limit: int = 12):
+    try:
+        return get_app().agent.get_document_detail(paper_id, passage_limit=passage_limit)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.get("/status")
+def get_status():
+    return get_app().agent.get_system_status()
+
+
+@app.get("/settings/model")
+def get_model_settings():
+    agent = get_app().agent
+    llm = agent.llm
+    store = load_profile_store(MODEL_PROFILES_PATH)
+    active_id = resolve_active_profile_id(store, llm)
+    active = find_profile(store, active_id) if active_id else None
+    base_url = getattr(llm, "base_url", "") or ""
+    provider = (active or {}).get("provider") or ("dashscope" if "dashscope" in base_url.lower() else "openai_compatible")
+    return {
+        "api_key": ("*" * 8) if getattr(llm, "api_key", "") else "",
+        "base_url": base_url,
+        "model": getattr(llm, "model", "") or "",
+        "provider": provider,
+        "embedding_model": getattr(llm, "embedding_model", ""),
+        "rerank_model": getattr(llm, "rerank_model", ""),
+        "chat_enabled": getattr(llm, "enabled", True),
+        "embedding_enabled": getattr(llm, "embedding_enabled", False),
+        "rerank_enabled": getattr(llm, "rerank_enabled", False),
+        "active_profile_id": active_id,
+        "profiles": [public_profile(item) for item in store.get("profiles") or []],
+        "profile": public_profile(active) if active else None,
+    }
+
+
 @app.get("/")
 def serve_index():
     return FileResponse(INDEX_FILE)
@@ -159,6 +219,20 @@ async def delete_session(request: Request):
         "session": deleted.model_dump(),
         "sessions": [item.model_dump() for item in get_app().list_sessions()],
     }
+
+
+@app.post("/sessions/{session_id}/truncate")
+async def truncate_session(session_id: str, request: Request):
+    payload = await request.json()
+    message_index = int(payload["message_index"])
+    try:
+        updated = get_app().truncate_session(session_id, message_index)
+        return {
+            "session": updated.model_dump(),
+            "sessions": [item.model_dump() for item in get_app().list_sessions()],
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.post("/import-document")
@@ -265,6 +339,51 @@ async def rag_lab_evaluate(request: Request):
         default_top_k=int(payload.get("top_k", 5)),
         default_candidate_k=payload.get("candidate_k"),
     )
+
+
+
+@app.post("/deep-review")
+async def deep_review(request: Request):
+    payload = await request.json()
+    topic = payload.get("topic", "")
+    if not topic:
+        raise HTTPException(status_code=400, detail="topic is required")
+    return get_app().agent.generate_deep_review(topic, top_k=int(payload.get("top_k", 5)))
+
+
+@app.post("/settings/model")
+async def update_model_settings(request: Request):
+    payload = await request.json()
+    try:
+        return apply_model_settings(get_app().agent, payload, MODEL_PROFILES_PATH, ENV_PATH)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/settings/models/list")
+async def list_available_models(request: Request):
+    payload = await request.json()
+    api_key = payload.get("api_key", "").strip()
+    base_url = (payload.get("base_url", "") or "").strip()
+    if not api_key or not base_url:
+        raise HTTPException(status_code=400, detail="api_key and base_url are required")
+    try:
+        import httpx as _httpx
+        from .llm import normalize_openai_base_url
+        url = f"{normalize_openai_base_url(base_url)}/models"
+        resp = _httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        models = [item.get("id") for item in (data.get("data") or []) if item.get("id")]
+        return {"models": models}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"获取模型列表失败：{exc}") from exc
 
 
 # Static files (must be last)

@@ -11,11 +11,11 @@ import {
   loadSettings, saveSettings,
 } from "./state.js";
 
-import { refreshSessions, loadSession, createSession, deleteSession, uploadDocument, listDocuments, deleteDocument, getModelSettings, updateModelSettings, listAvailableModels } from "./api.js";
+import { refreshSessions, loadSession, createSession, deleteSession, uploadDocument, listDocuments, deleteDocument, getModelSettings, updateModelSettings, listAvailableModels, truncateSession } from "./api.js";
 import { runChatStream, abortChatStream, getLastStreamQuestion } from "./stream.js";
 import { initWorkspace, renderLatestEvidence, refreshWorkspaceDocuments, refreshWorkspaceStatus } from "./workspace.js";
 import {
-  toggleWelcomeScreen, scrollToBottom, renderSessionHistory,
+  toggleWelcomeScreen, scrollToBottom, renderSessionHistory, bindUserMessageActions,
 } from "./render/chat.js";
 import { escapeHtml } from "./render/escape.js";
 
@@ -613,10 +613,12 @@ async function openSettingsPanel() {
       modelProvider: savedRawSettings.modelProvider || modelStatus.provider || appSettings.modelProvider || "dashscope",
       modelBaseUrl: savedRawSettings.modelBaseUrl || modelStatus.base_url || appSettings.modelBaseUrl || "",
       modelName: savedRawSettings.modelName || modelStatus.model || appSettings.modelName || "qwen-plus",
+      modelApiKey: savedRawSettings.modelApiKey || modelStatus.api_key || appSettings.modelApiKey || "",
       activeProfileId: modelStatus.active_profile_id || savedRawSettings.activeProfileId || appSettings.activeProfileId || "",
       modelProfiles: mergeModelProfiles(savedRawSettings.modelProfiles || appSettings.modelProfiles || [], modelStatus.profiles || []),
     });
     panel.querySelector("#settings-provider").value = appSettings.modelProvider || "dashscope";
+    panel.querySelector("#settings-api-key").value = appSettings.modelApiKey || "";
     panel.querySelector("#settings-base-url").value = appSettings.modelBaseUrl || "";
     showModelTextInput(panel, appSettings.modelName || modelStatus.model || "qwen-plus");
     syncProviderFields(panel);
@@ -967,5 +969,35 @@ toggleWelcomeScreen(true);
 refreshSessions();
 renderLatestEvidence();
 refreshWorkspaceStatus();
+
+// 注册消息编辑和重试的回调
+bindUserMessageActions(async (text, userMsgIndex, isEdit) => {
+  const sessionId = getCurrentSessionId();
+  if (getIsSubmitting()) return;
+
+  const userMsgs = Array.from(chatMessages.querySelectorAll(".chat-msg-user"));
+  const targetUserMsg = userMsgs[userMsgIndex];
+  if (!targetUserMsg) return;
+
+  try {
+    if (sessionId) {
+      const truncateIndex = 2 * userMsgIndex;
+      await truncateSession(sessionId, truncateIndex);
+    }
+
+    // 从 DOM 中删除目标消息及其后面的所有兄弟节点
+    let el = targetUserMsg;
+    while (el) {
+      const next = el.nextElementSibling;
+      el.remove();
+      el = next;
+    }
+
+    // 重新提交问题
+    await submitQuestion(null, text);
+  } catch (err) {
+    showToast("操作失败：" + (err.message || "未知错误"), "error");
+  }
+});
 
 window.__DODO_CHAT_READY = true;

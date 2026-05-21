@@ -226,3 +226,23 @@ export async function deleteSession(sessionId) {
     throw error;
   }
 }
+
+export async function truncateSession(sessionId, messageIndex) {
+  try {
+    const response = await fetch(`/sessions/${encodeURIComponent(sessionId)}/truncate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ message_index: messageIndex }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || `Truncate failed: ${response.status}`);
+    }
+    renderSessions(data.sessions || []);
+    return data.session;
+  } catch (error) {
+    throw error;
+  }
+}

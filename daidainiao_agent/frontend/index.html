@@ -136,7 +136,10 @@
             <section class="workspace-view" data-workspace-view="documents">
               <div class="workspace-section-head">
                 <h3>知识库管理</h3>
-                <button id="workspace-refresh-documents" class="ghost-button compact-button" type="button">刷新</button>
+                <div style="display:flex;gap:6px;">
+                  <button id="workspace-delete-all-documents" class="ghost-button compact-button" type="button" style="color:var(--danger,#e05252);">全部删除</button>
+                  <button id="workspace-refresh-documents" class="ghost-button compact-button" type="button">刷新</button>
+                </div>
               </div>
               <div id="workspace-documents-output" class="workspace-output">
                 <p class="settings-empty">读取文档列表中...</p>

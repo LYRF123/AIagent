@@ -124,3 +124,20 @@ class SessionStore:
             session.preview = normalize_preview(answer or question)
             self._persist()
             return self._copy_session(session)
+
+    def truncate_session(self, session_id: str, message_index: int) -> SessionDetail:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise ValueError("会话不存在。")
+            # Truncate messages list
+            session.messages = session.messages[:message_index]
+            session.turn_count = len(session.messages) // 2
+            session.updated_at = utc_now_iso()
+            if session.messages:
+                # Use the content of the last message for the preview
+                session.preview = normalize_preview(session.messages[-1].content)
+            else:
+                session.preview = ""
+            self._persist()
+            return self._copy_session(session)

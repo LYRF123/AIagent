@@ -9,10 +9,11 @@
 - 本地论文语料检索：基于 TF-IDF、BM25、查询扩展和混合排序检索相关论文片段。
 - 证据约束问答：回答会附带证据片段、引用信息和调用轨迹，降低无依据生成的风险。
 - 流式问答：Web 界面支持逐段返回回答，并在结束后展示完整证据和 JSON。
-- 多轮会话：保存会话历史，后续问题会结合最近上下文做检索。
+- 多轮会话：保存会话历史（`data/sessions.json`），追问时会扩展检索查询，并在生成时注入最近对话摘要。
+- 模型配置档案：Web 设置中可保存、切换多套 API（URL / 模型 / Key），写入 `data/model_profiles.json` 与 `.env`。
 - 论文对比：按论文 ID 或检索结果对比多篇论文的方法、发现和局限。
 - 主题综述：围绕一个主题生成简短综述、趋势、代表论文、阅读顺序和开放问题。
-- 本地文档导入：支持导入 PDF、DOCX、TXT，并自动刷新知识库索引。
+- 本地文档导入：支持导入 PDF、DOCX、TXT，并自动刷新知识库索引；可在设置中删除已导入文档。
 - 离线评测：运行内置 `demo_eval.json`，统计论文命中率、关键词命中率、平均回答长度和失败案例。
 - Ragas 评估：配置 DashScope 后可运行 faithfulness、context precision、context recall、answer relevancy 等 LLM-as-judge 指标。
 - CLI 与 Web UI：既能在终端运行，也能通过 `http://127.0.0.1:8000` 使用中文界面。
@@ -57,7 +58,13 @@ $env:DASHSCOPE_EMBEDDING_MODEL = 'text-embedding-v4'
 $env:DASHSCOPE_RERANK_MODEL = 'gte-rerank-v2'
 ```
 
-项目也会读取仓库根目录下的 `.env` 文件，但不要把包含真实密钥的 `.env` 提交到仓库。
+项目也会读取 **`daidainiao_agent/.env`**（包根目录），但不要把包含真实密钥的 `.env` 提交到仓库。
+
+在 Web **设置 → 模型 & 检索** 中填写 API 并点「保存并应用」时：
+
+- **新建配置**须填写「配置名称」；
+- 配置列表来自 `GET /settings/model` 的 `profiles` 字段，持久化在 `data/model_profiles.json`（已加入 `.gitignore`）；
+- 仅修改「证据片段数 / 严格模式 / 重排」时只更新浏览器 localStorage，不会新增模型档案。
 
 ## 命令行使用
 
@@ -128,7 +135,8 @@ python -m daidainiao_agent.cli --corpus data\literature_papers.json eval --eval-
 ## 启动 Web 工作台
 
 ```powershell
-python -m daidainiao_agent.server
+python -m daidainiao_agent.cli serve
+# 或指定端口：python -m daidainiao_agent.cli serve --host 127.0.0.1 --port 8000
 ```
 
 然后在浏览器打开：
@@ -137,65 +145,70 @@ python -m daidainiao_agent.server
 http://127.0.0.1:8000
 ```
 
+旧版 stdlib HTTP 服务（不推荐）：
+
+```powershell
+python -m daidainiao_agent.cli serve --legacy
+```
+
 如果要让 Web 工作台使用自定义论文库和评测集，可以先设置：
 
 ```powershell
 $env:DAIDAINIAO_AGENT_CORPUS = 'data\literature_papers.json'
 $env:DAIDAINIAO_AGENT_EVAL_PATH = 'data\literature_eval.json'
-python -m daidainiao_agent.server
+python -m daidainiao_agent.cli serve
 ```
 
 Web 界面提供以下入口：
 
 - 呆呆鸟助手聊天主界面（流式问答 + 会话侧栏）
 - 思考步骤动画：检索 → 拆解 → 生成 → 引用
-- 证据片段折叠卡（默认展示前 3 条）
-- 新建 / 切换 / 清空对话
-- 导入 PDF / DOCX / TXT 文档
+- 证据片段折叠卡（默认可展开更多；多页 PDF 按页/locator 去重展示）
+- 新建 / 切换 / 清空 / 截断对话
+- 导入 PDF / DOCX / TXT；设置中管理已导入文档与模型档案
+
+## 上下文如何组织
+
+单次问答时，后端会拼装三层上下文（详见 `answer_generator.py` / `agent.py`）：
+
+| 层级 | 来源 | 作用 |
+|------|------|------|
+| 会话历史 | `data/sessions.json`，按 `session_id` 加载 | 追问时扩展检索查询；生成时取最近 **4 轮** 压缩进 prompt |
+| 检索证据 | 混合检索 → 重排 → `top_k` 条 `Evidence` | 作为 RAG 依据，要求回答带 `[1][2]` 引用 |
+| LLM Prompt | system + 单条 user | user 中含「历史摘要 + 当前问题 + 证据全文」 |
+
+前端每次请求只传 `question`、`session_id`、`top_k`、`strict_grounded`、`use_rerank`；完整聊天记录由服务端按会话 ID 读取。
+
+## 主要 HTTP API（FastAPI）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/settings/model` | 当前模型状态 + `profiles` 配置列表 |
+| POST | `/settings/model` | 保存/切换模型档案，写 `.env` |
+| POST | `/ask-stream` | SSE 流式问答 |
+| POST | `/import-document` | 上传 PDF/DOCX/TXT |
+| POST | `/delete-document` | 删除已导入文档 |
+| POST | `/sessions/{id}/truncate` | 从某条消息起截断会话 |
+| GET | `/sessions` | 会话列表 |
 
 ## 项目结构
 
 ```text
 daidainiao_agent/
   daidainiao_agent/           # Python 包
-  frontend/
-    index.html                # Web 页面（呆呆鸟聊天主界面）
-    app.js                    # 前端交互入口
-    ui-v2.css                 # v2 主题覆盖
-    workspace.js              # 工作台侧栏
-    confirm.js                # 确认弹窗
-    icons/                    # 呆呆鸟等品牌图标
-    state.js                  # DOM 引用与前端状态
-    api.js                    # REST API 调用
-    stream.js                 # /ask-stream SSE 流式驱动
-    styles.css                # 基础样式
-    handlers/
-      sidebar.js              # 侧栏开关
-    render/
-      chat.js                 # 聊天气泡、思考动画、证据片段
-      sessions.js             # 会话列表
-      escape.js               # 转义与 markdown 辅助
-    __init__.py
-    agent.py                  # 研究助手核心逻辑（编排层）
-    answer_generator.py       # 答案生成（规则 + LLM + 流式）
-    app_service.py            # 会话和问答应用服务
+    agent.py                  # 研究助手编排
+    answer_generator.py       # 答案生成、prompt、证据去重
+    app_service.py            # 会话与问答服务
     cli.py                    # 命令行入口
-    comparison.py             # 论文对比逻辑
-    corpus.py                 # 论文语料加载和维护
-    evaluation.py             # 离线评测
-    file_import.py            # PDF/DOCX/TXT 导入
-    hybrid.py                 # 混合检索和重排
-    llm.py                    # DashScope/Qwen 客户端
-    logging_config.py         # 日志配置
-    models.py                 # Pydantic 数据模型
-    rag.py                    # LangChain + FAISS 向量检索
-    retrieval.py              # TF-IDF、BM25、查询扩展
-    review.py                 # 主题综述逻辑
-    server.py                 # 本地 HTTP 服务（legacy）
     fastapi_server.py         # FastAPI 服务（默认）
-    server_utils.py           # 导入等 HTTP 工具
-    pipeline.py / steps.py    # 问答流水线
+    model_profiles.py         # 模型配置档案读写
     session_store.py          # 会话持久化
+    pipeline.py / steps.py    # 问答流水线
+    hybrid.py / rag.py / retrieval.py  # 检索
+    ...
+  frontend/
+    index.html / app.js / stream.js / workspace.js
+    render/ confirm.js / handlers/
   data/
     demo_papers.json          # 内置论文语料
     demo_eval.json            # 内置评测集

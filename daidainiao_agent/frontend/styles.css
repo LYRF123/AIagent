@@ -626,6 +626,66 @@ button:disabled {
 .chat-msg-user {
   display: flex;
   justify-content: flex-end;
+  align-items: flex-start;
+  position: relative;
+}
+
+.chat-msg-user-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-right: 10px;
+  margin-top: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1), transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  transform: translateX(4px);
+}
+
+.chat-msg-user:hover .chat-msg-user-actions,
+.chat-msg-user.is-editing .chat-msg-user-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.chat-msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-strong);
+  background: var(--surface-subtle);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s ease;
+}
+
+.chat-msg-action-btn:hover {
+  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.chat-msg-action-btn svg {
+  flex-shrink: 0;
+}
+
+.chat-msg-action-confirm {
+  color: #ffffff;
+  background: var(--brand-strong);
+  border-color: var(--brand-strong);
+}
+
+.chat-msg-action-confirm:hover {
+  color: #ffffff;
+  background: #34583f;
+  border-color: #34583f;
 }
 
 .chat-msg-user p {
@@ -634,6 +694,28 @@ button:disabled {
   color: #ffffff;
   background: var(--brand-strong);
   border-radius: var(--radius-md);
+  box-shadow: 0 1.5px 3px rgba(43, 85, 52, 0.08);
+}
+
+.chat-msg-edit-input {
+  width: min(560px, 88%);
+  padding: 10px 13px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.6;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  resize: vertical;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(93, 123, 99, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.chat-msg-edit-input:focus {
+  border-color: var(--brand-strong);
+  box-shadow: 0 0 0 3px rgba(93, 123, 99, 0.20), 0 2px 10px rgba(0, 0, 0, 0.06);
 }
 
 .chat-msg-assistant {

@@ -158,6 +158,12 @@ export async function refreshWorkspaceDocuments() {
     const data = await listKnowledgeDocuments({ includeBase: true });
     cachedDocuments = data.items || [];
     syncReadingSelect(cachedDocuments);
+    // 更新全部删除按钟可见性：有导入文档才显示
+    const deleteAllBtn = el("workspace-delete-all-documents");
+    if (deleteAllBtn) {
+      const importedCount = cachedDocuments.filter((d) => d.imported).length;
+      deleteAllBtn.style.display = importedCount > 0 ? "" : "none";
+    }
     if (!cachedDocuments.length) {
       setOutput("workspace-documents-output", `<p class="settings-empty">知识库还没有文档。</p>`);
       return;
@@ -406,6 +412,31 @@ export function initWorkspace() {
   el("workspace-run-reading")?.addEventListener("click", () => renderReadingBrief());
   el("workspace-run-review")?.addEventListener("click", runWorkspaceReview);
   el("workspace-refresh-status")?.addEventListener("click", refreshWorkspaceStatus);
+
+  el("workspace-delete-all-documents")?.addEventListener("click", async () => {
+    const imported = cachedDocuments.filter((d) => d.imported);
+    if (!imported.length) return;
+    const confirmed = await confirmAction({
+      title: `删除全部导入文档？`,
+      message: `将从知识库移除 ${imported.length} 个导入文档，无法恢复。`,
+      confirmText: "全部删除",
+      tone: "danger",
+    });
+    if (!confirmed) return;
+    setLoading("workspace-documents-output", `删除中（共 ${imported.length} 个）...`);
+    let failed = 0;
+    for (const doc of imported) {
+      try {
+        await deleteDocument(doc.paper_id);
+      } catch {
+        failed++;
+      }
+    }
+    if (failed > 0) {
+      setError("workspace-documents-output", new Error(`删除完成，${failed} 个失败。`));
+    }
+    await refreshWorkspaceDocuments();
+  });
 
   const docOutput = el("workspace-documents-output");
   docOutput?.addEventListener("click", async (event) => {
