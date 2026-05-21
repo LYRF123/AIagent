@@ -4,18 +4,18 @@ import json
 import os
 import threading
 import time
-from http import HTTPStatus
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse, HTMLResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .app_service import ResearchApp
 from .agent import ResearchAssistant
 from .evaluation import default_eval_path, run_evaluation
+from .logging_config import logger
 from .rag_lab import run_rag_lab_evaluation
 from .server import import_saved_document
 from .model_profiles import (
@@ -25,10 +25,18 @@ from .model_profiles import (
     public_profile,
     resolve_active_profile_id,
 )
+from .server_utils import (
+    MAX_JSON_BODY_BYTES,
+    MAX_UPLOAD_BYTES,
+    PROJECT_ROOT,
+    cors_allow_credentials,
+    default_cors_origins,
+    rate_limit_exempt,
+    resolve_data_path,
+)
 
 CORPUS_PATH = os.getenv("DAIDAINIAO_AGENT_CORPUS") or os.getenv("RESEARCH_AGENT_CORPUS")
 EVAL_PATH = os.getenv("DAIDAINIAO_AGENT_EVAL_PATH") or os.getenv("RESEARCH_AGENT_EVAL_PATH")
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 INDEX_FILE = FRONTEND_DIR / "index.html"
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
@@ -46,35 +54,42 @@ def get_app() -> ResearchApp:
     return _app_instance
 
 
+def _resolve_eval_path(path_value: str | None) -> Path | None:
+    if not path_value:
+        return None
+    return resolve_data_path(path_value, must_exist=True)
+
+
 app = FastAPI(title="Research Agent")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=default_cors_origins(),
+    allow_credentials=cors_allow_credentials(),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Rate limiting middleware
+# In-memory rate limit (per process; not shared across workers)
 _rate_limits: dict[str, list[float]] = {}
 _rate_lock = threading.Lock()
 
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    now = time.time()
-    ip = request.client.host if request.client else "unknown"
-    with _rate_lock:
-        timestamps = _rate_limits.get(ip, [])
-        timestamps[:] = [t for t in timestamps if now - t <= 60.0]
-        if len(timestamps) >= 30:
-            return JSONResponse(
-                status_code=429,
-                content={"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."},
-            )
-        timestamps.append(now)
-        _rate_limits[ip] = timestamps
+    if not rate_limit_exempt(request.url.path):
+        now = time.time()
+        ip = request.client.host if request.client else "unknown"
+        with _rate_lock:
+            timestamps = _rate_limits.get(ip, [])
+            timestamps[:] = [t for t in timestamps if now - t <= 60.0]
+            if len(timestamps) >= 30:
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "rate_limit_exceeded", "message": "Too many requests. Please slow down."},
+                )
+            timestamps.append(now)
+            _rate_limits[ip] = timestamps
     response = await call_next(request)
     return response
 
@@ -95,8 +110,8 @@ def list_sessions():
 def get_session(session_id: str):
     try:
         return get_app().get_session(session_id).model_dump()
-    except KeyError:
-        raise HTTPException(status_code=404, detail="not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/documents")
@@ -190,12 +205,19 @@ async def ask_stream(request: Request):
                 use_rerank=bool(payload.get("use_rerank", True)),
             ):
                 event_type = str(event.get("type", "message"))
-                event_data = event.get("data") if "data" in event else {"delta": event.get("delta", "")}
+                if event_type == "step":
+                    event_data = {"step": event.get("step", "")}
+                elif "data" in event:
+                    event_data = event["data"]
+                else:
+                    event_data = {"delta": event.get("delta", "")}
                 if not isinstance(event_data, dict):
                     event_data = {"value": event_data}
                 yield f"event: {event_type}\ndata: {json.dumps(event_data, ensure_ascii=False)}\n\n"
-        except Exception:
-            yield f"event: error\ndata: {json.dumps({'error': 'internal server error'})}\n\n"
+        except Exception as exc:
+            logger.exception("ask-stream failed")
+            detail = str(exc) if os.getenv("DAIDAINIAO_DEBUG", "").strip().lower() in ("1", "true", "yes") else "internal server error"
+            yield f"event: error\ndata: {json.dumps({'error': detail}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -213,7 +235,10 @@ async def create_session(request: Request):
 @app.post("/delete-session")
 async def delete_session(request: Request):
     payload = await request.json()
-    deleted = get_app().delete_session(payload["session_id"])
+    try:
+        deleted = get_app().delete_session(payload["session_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
         "message": "会话已删除。",
         "session": deleted.model_dump(),
@@ -240,6 +265,8 @@ async def import_document(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="未选择文件")
     file_bytes = await file.read()
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="上传文件超过 50MB 限制。")
     if not file_bytes:
         raise HTTPException(status_code=400, detail="上传文件为空")
     safe_name = Path(file.filename).name
@@ -260,7 +287,10 @@ async def import_document(file: UploadFile = File(...)):
 @app.post("/delete-document")
 async def delete_document(request: Request):
     payload = await request.json()
-    deleted = get_app().agent.delete_document(payload["paper_id"])
+    try:
+        deleted = get_app().agent.delete_document(payload["paper_id"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {
         "message": "文档已删除，知识库已刷新。",
         "document": deleted,
@@ -301,13 +331,14 @@ async def evaluate(request: Request):
     use_ragas = str(params.get("ragas", "false")).lower() in ("true", "1", "yes")
     include_imported = str(params.get("include_imported", "false")).lower() in ("true", "1", "yes")
 
-    eval_path = EVAL_PATH if EVAL_PATH else None
-    if eval_path is not None:
-        if not Path(eval_path).exists():
-            raise HTTPException(status_code=404, detail="evaluation not configured")
-    else:
-        if not default_eval_path().exists():
-            raise HTTPException(status_code=404, detail="evaluation not configured")
+    eval_path: Path | None = None
+    if EVAL_PATH:
+        try:
+            eval_path = _resolve_eval_path(EVAL_PATH)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    elif not default_eval_path().exists():
+        raise HTTPException(status_code=404, detail="evaluation not configured")
 
     if include_imported:
         eval_agent = ResearchAssistant(corpus_path=CORPUS_PATH, include_imported=True)
@@ -319,10 +350,17 @@ async def evaluate(request: Request):
 
 @app.post("/rag-lab/evaluate")
 async def rag_lab_evaluate(request: Request):
-    payload = await request.json()
-    eval_path = payload.get("eval_path") or (EVAL_PATH if EVAL_PATH else None)
-    if eval_path is not None and not Path(eval_path).exists():
-        raise HTTPException(status_code=404, detail="evaluation not configured")
+    body = await request.body()
+    if len(body) > MAX_JSON_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="请求体过大。")
+    payload = json.loads(body.decode("utf-8") if body else "{}")
+    raw_eval_path = payload.get("eval_path") or (EVAL_PATH if EVAL_PATH else None)
+    eval_path: Path | None = None
+    if raw_eval_path:
+        try:
+            eval_path = _resolve_eval_path(str(raw_eval_path))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     include_imported_value = payload.get("include_imported", True)
     include_imported = (

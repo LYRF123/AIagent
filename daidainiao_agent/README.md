@@ -1,4 +1,4 @@
-﻿# 呆呆鸟论文助手（daidainiao_agent）
+# 呆呆鸟论文助手（daidainiao_agent）
 
 `daidainiao_agent` 是一个面向论文阅读、资料检索和 AI Agent 面试准备的轻量研究助手。项目内置了一份小型公开论文示例语料，也支持导入本地 PDF、DOCX、TXT 文档，把它们加入知识库后进行检索、问答、对比、综述和离线评测。
 
@@ -144,6 +144,8 @@ python -m daidainiao_agent.cli serve
 ```text
 http://127.0.0.1:8000
 ```
+
+**安全提示**：默认服务无登录鉴权，仅建议在本地（`127.0.0.1`）使用，勿将端口暴露到公网。上传文件上限 50MB；评测集路径仅允许项目 `data/` 或项目根目录下的文件。可选环境变量：`DAIDAINIAO_CORS_ORIGINS`（逗号分隔来源）、`DAIDAINIAO_DEBUG=1`（SSE 错误显示详情）。
 
 旧版 stdlib HTTP 服务（不推荐）：
 

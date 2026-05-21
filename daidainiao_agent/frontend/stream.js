@@ -113,7 +113,28 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
   let stepTimer = null;
   const doneSteps = [];
   let firstChunkReceived = false;
+  let usingSimulatedSteps = true;
+
+  const applyPipelineStep = (stepName) => {
+    if (!stepName || !thinkingEl) {
+      return;
+    }
+    usingSimulatedSteps = false;
+    clearTimeout(stepTimer);
+    const order = ["retrieve", "decompose", "generate", "cite"];
+    const index = order.indexOf(stepName);
+    if (index < 0) {
+      return;
+    }
+    const completed = order.slice(0, index);
+    const active = index < order.length - 1 ? order[index] : "cite";
+    updateThinkingSteps(thinkingEl, { activeStep: active, doneSteps: completed });
+  };
+
   stepTimer = setTimeout(() => {
+    if (!usingSimulatedSteps) {
+      return;
+    }
     updateThinkingSteps(thinkingEl, { activeStep: "retrieve", doneSteps });
     stepTimer = setTimeout(() => {
       doneSteps.push("retrieve");
@@ -170,15 +191,21 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
     let handledError = false;
 
     await readEventStream(response, (eventType, data) => {
+      if (eventType === "step") {
+        applyPipelineStep(data.step);
+        return;
+      }
       if (eventType === "chunk") {
         clearTimeout(stepTimer);
         publishStreamStatus("正在生成回答…");
         if (!firstChunkReceived) {
           firstChunkReceived = true;
-          updateThinkingSteps(thinkingEl, { activeStep: "decompose", doneSteps: ["retrieve"] });
-          setTimeout(() => {
-            updateThinkingSteps(thinkingEl, { activeStep: "generate", doneSteps: ["retrieve", "decompose"] });
-          }, 250);
+          if (usingSimulatedSteps) {
+            updateThinkingSteps(thinkingEl, { activeStep: "decompose", doneSteps: ["retrieve"] });
+            setTimeout(() => {
+              updateThinkingSteps(thinkingEl, { activeStep: "generate", doneSteps: ["retrieve", "decompose"] });
+            }, 250);
+          }
         }
         appendStreamDelta(el, data.delta);
         scrollToBottom();

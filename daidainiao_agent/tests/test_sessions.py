@@ -43,7 +43,15 @@ def test_app_ask_passes_existing_history_to_agent(session_store) -> None:
         def __init__(self) -> None:
             self.calls: list[dict] = []
 
-        def answer_question(self, question: str, top_k: int = 5, strict_grounded: bool = True, history: list[ConversationMessage] | None = None) -> AnswerResult:
+        def answer_question(
+            self,
+            question: str,
+            top_k: int = 5,
+            strict_grounded: bool = True,
+            history: list[ConversationMessage] | None = None,
+            use_rerank: bool = True,
+            **kwargs,
+        ) -> AnswerResult:
             self.calls.append(
                 {
                     "question": question,
@@ -72,7 +80,15 @@ def test_app_ask_passes_existing_history_to_agent(session_store) -> None:
 
 def test_app_ask_stream_emits_events_and_persists_session(session_store) -> None:
     class DummyAgent:
-        def answer_question_stream(self, question: str, top_k: int = 5, strict_grounded: bool = True, history: list[ConversationMessage] | None = None):
+        def answer_question_stream(
+            self,
+            question: str,
+            top_k: int = 5,
+            strict_grounded: bool = True,
+            history: list[ConversationMessage] | None = None,
+            use_rerank: bool = True,
+            **kwargs,
+        ):
             yield {"type": "chunk", "delta": "Hello "}
             yield {"type": "chunk", "delta": "world"}
             yield {

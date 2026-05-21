@@ -29,26 +29,32 @@ class RetrieveStep(PipelineStep):
 
         retrieval_strategy = ctx.extra.get("retrieval_strategy")
         config = ctx.extra.get("retrieval_config")
+        search_result = None
 
         if retrieval_strategy is None or config is None:
-            # Fallback: direct call
-            result = retriever.search(
+            search_result = retriever.search(
                 ctx.retrieval_query or ctx.question,
                 top_k=max(ctx.top_k, 5),
                 candidate_k=max(ctx.top_k * 4, 20),
                 use_rerank=ctx.use_rerank,
             )
-            evidence = result.evidence
-            diagnostics = result.diagnostics
+            evidence = search_result.evidence
+            diagnostics = search_result.diagnostics
         else:
             evidence, diagnostics = retrieval_strategy.search(
                 ctx.retrieval_query or ctx.question, retriever, config
             )
 
-        # Record trace from retriever
-        if hasattr(result := None, "trace"):
-            pass
-        # Always extend trace from diagnostics
+        if search_result is not None and getattr(search_result, "trace", None):
+            for item in search_result.trace:
+                if isinstance(item, dict):
+                    ctx.trace.append(
+                        ToolTrace(
+                            tool=item.get("tool", "retrieval"),
+                            input=item.get("input", ctx.retrieval_query or ctx.question),
+                            output=item.get("output", ""),
+                        )
+                    )
         ctx.trace.extend(
             ToolTrace(tool="retrieval", input=ctx.retrieval_query or ctx.question,
                        output=f"returned {len(evidence)} evidence items")

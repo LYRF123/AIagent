@@ -16,6 +16,8 @@ from uuid import uuid4
 from .app_service import ResearchApp
 from .agent import ResearchAssistant
 from .evaluation import default_eval_path, run_evaluation
+from .rag_lab import run_rag_lab_evaluation
+from .server_utils import resolve_data_path
 
 
 CORPUS_PATH = os.getenv("DAIDAINIAO_AGENT_CORPUS") or os.getenv("RESEARCH_AGENT_CORPUS")
@@ -221,7 +223,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 session_id = route.removeprefix("/sessions/")
                 self._json_response(app.get_session(session_id).model_dump())
-            except KeyError:
+            except ValueError:
                 self._json_response({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
             except Exception:
                 self._json_response({"error": "bad request"}, status=HTTPStatus.BAD_REQUEST)
@@ -324,6 +326,31 @@ class Handler(BaseHTTPRequestHandler):
                     eval_path=eval_path,
                     top_k=top_k,
                     use_ragas=use_ragas,
+                )
+            elif self.path == "/rag-lab/evaluate":
+                payload = self._read_json()
+                raw_eval_path = payload.get("eval_path") or (EVAL_PATH if EVAL_PATH else None)
+                eval_path_resolved = None
+                if raw_eval_path:
+                    try:
+                        eval_path_resolved = resolve_data_path(str(raw_eval_path), must_exist=True)
+                    except ValueError as exc:
+                        self._json_response({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                        return
+                include_imported_value = payload.get("include_imported", True)
+                include_imported = (
+                    include_imported_value
+                    if isinstance(include_imported_value, bool)
+                    else str(include_imported_value).strip().lower() not in ("false", "0", "no", "off")
+                )
+                eval_agent = app.agent if include_imported else ResearchAssistant(corpus_path=CORPUS_PATH, include_imported=False)
+                result = run_rag_lab_evaluation(
+                    eval_agent,
+                    eval_path=eval_path_resolved,
+                    cases=payload.get("cases"),
+                    configs=payload.get("configs"),
+                    default_top_k=int(payload.get("top_k", 5)),
+                    default_candidate_k=payload.get("candidate_k"),
                 )
             else:
                 self._json_response({"error": "not found"}, status=HTTPStatus.NOT_FOUND)

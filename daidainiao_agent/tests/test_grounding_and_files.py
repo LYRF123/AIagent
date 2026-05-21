@@ -13,13 +13,20 @@ def reset_import_state(agent: "ResearchAssistant", imported_path: Path) -> None:
 
 def test_answer_without_evidence_is_blocked_by_default(daidainiao_agent, monkeypatch) -> None:
     daidainiao_agent.llm.api_key = "test-key"
-    monkeypatch.setattr(daidainiao_agent, "_retrieve_evidence", lambda question, top_k, trace: [])
+    monkeypatch.setattr(
+        daidainiao_agent,
+        "_retrieve_evidence",
+        lambda question, top_k, trace, use_rerank=True: [],
+    )
 
     def unexpected_call(question: str, trace: list) -> AnswerResult:
         raise AssertionError("general LLM fallback should not run in strict mode")
 
     monkeypatch.setattr(daidainiao_agent, "_llm_general_answer", unexpected_call)
-    answer = daidainiao_agent.answer_question("A completely unsupported question")
+    answer = daidainiao_agent.answer_question(
+        "A completely unsupported question",
+        self_correct=False,
+    )
 
     assert answer.insufficient_evidence is True
     assert answer.claim_audit == []
@@ -29,7 +36,11 @@ def test_answer_without_evidence_is_blocked_by_default(daidainiao_agent, monkeyp
 
 def test_answer_without_evidence_can_fallback_when_opted_out(daidainiao_agent, monkeypatch) -> None:
     daidainiao_agent.llm.api_key = "test-key"
-    monkeypatch.setattr(daidainiao_agent, "_retrieve_evidence", lambda question, top_k, trace: [])
+    monkeypatch.setattr(
+        daidainiao_agent,
+        "_retrieve_evidence",
+        lambda question, top_k, trace, use_rerank=True: [],
+    )
     monkeypatch.setattr(
         daidainiao_agent,
         "_llm_general_answer",
@@ -41,7 +52,11 @@ def test_answer_without_evidence_can_fallback_when_opted_out(daidainiao_agent, m
         ),
     )
 
-    answer = daidainiao_agent.answer_question("A completely unsupported question", strict_grounded=False)
+    answer = daidainiao_agent.answer_question(
+        "A completely unsupported question",
+        strict_grounded=False,
+        self_correct=False,
+    )
 
     assert answer.answer == "Fallback answer."
     assert answer.insufficient_evidence is False
@@ -92,7 +107,7 @@ def test_delete_document_only_removes_managed_upload_file(daidainiao_agent, tmp_
 def test_follow_up_question_uses_session_history_in_retrieval(daidainiao_agent, monkeypatch) -> None:
     captured: dict[str, str] = {}
 
-    def fake_retrieve(query: str, top_k: int, trace: list) -> list:
+    def fake_retrieve(query: str, top_k: int, trace: list, use_rerank: bool = True) -> list:
         captured["query"] = query
         return []
 
@@ -103,6 +118,7 @@ def test_follow_up_question_uses_session_history_in_retrieval(daidainiao_agent, 
             ConversationMessage(role="user", content="How does ReAct work?"),
             ConversationMessage(role="assistant", content="ReAct combines reasoning with tool use."),
         ],
+        self_correct=False,
     )
 
     assert answer.insufficient_evidence is True
@@ -114,7 +130,7 @@ def test_answer_question_stream_emits_chunks_and_final(daidainiao_agent, monkeyp
     monkeypatch.setattr(
         daidainiao_agent,
         "_retrieve_evidence",
-        lambda query, top_k, trace: [
+        lambda query, top_k, trace, use_rerank=True: [
             Evidence(
                 paper_id="react",
                 title="ReAct",
@@ -125,7 +141,9 @@ def test_answer_question_stream_emits_chunks_and_final(daidainiao_agent, monkeyp
         ],
     )
 
-    events = list(daidainiao_agent.answer_question_stream("How does ReAct work?", top_k=1))
+    events = list(
+        daidainiao_agent.answer_question_stream("How does ReAct work?", top_k=1, self_correct=False)
+    )
 
     assert any(event["type"] == "chunk" for event in events)
     assert events[-1]["type"] == "final"
@@ -153,7 +171,7 @@ def test_rule_based_answer_matches_chinese_question_language(daidainiao_agent, m
     monkeypatch.setattr(
         daidainiao_agent,
         "_retrieve_evidence",
-        lambda query, top_k, trace: [
+        lambda query, top_k, trace, use_rerank=True: [
             Evidence(
                 paper_id="react",
                 title="ReAct",
@@ -165,7 +183,11 @@ def test_rule_based_answer_matches_chinese_question_language(daidainiao_agent, m
     )
 
     daidainiao_agent.llm.api_key = None
-    answer = daidainiao_agent.answer_question("ReAct 是如何把推理和工具调用结合起来的？", top_k=1)
+    answer = daidainiao_agent.answer_question(
+        "ReAct 是如何把推理和工具调用结合起来的？",
+        top_k=1,
+        self_correct=False,
+    )
 
     assert "表明" in answer.answer
     assert "indicates that" not in answer.answer

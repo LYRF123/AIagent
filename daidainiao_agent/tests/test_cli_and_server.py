@@ -36,6 +36,16 @@ def test_parse_multipart_file_extracts_upload() -> None:
     assert file_bytes == b"hello paper"
 
 
+def test_get_missing_session_returns_404() -> None:
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        response = client.get("/sessions/does-not-exist")
+    finally:
+        fastapi_server._rate_limits.clear()
+    assert response.status_code == 404
+
+
 def test_static_assets_do_not_count_against_rate_limit() -> None:
     fastapi_server._rate_limits.clear()
     client = TestClient(fastapi_server.app)

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 import re
+from typing import Any
 
 from .answer_generator import AnswerGenerator
 from .comparison import compare_papers as _compare_papers_func
@@ -27,6 +29,17 @@ from .strategies import (
     RetrievalConfig,
     RuleBasedGeneration,
 )
+
+
+@dataclass
+class _ResearchPrep:
+    retrieval_query: str
+    evidence: list[Evidence]
+    trace: list[ToolTrace]
+    retrieval_diagnostics: dict
+    crag_decision: Any = None
+    retrieval_confidence: float = 0.0
+    early_result: AnswerResult | None = None
 
 
 class ResearchAssistant:
@@ -333,125 +346,6 @@ class ResearchAssistant:
             "remaining_count": len(self.corpus.list_imported_papers()),
         }
 
-    def build_reading_brief(self, paper_id: str) -> dict:
-        paper = self.corpus.get_paper(paper_id)
-        passages = [item for item in self.corpus.passages if item.paper_id == paper_id]
-        terms = self._extract_terms(paper)
-        suggested_questions = [
-            f"{paper.title} 的核心问题是什么？",
-            f"{paper.title} 使用了哪些方法？",
-            f"{paper.title} 的主要发现和局限是什么？",
-            f"{paper.title} 和同主题其他论文有什么差异？",
-            f"基于 {paper.title}，后续还可以研究什么？",
-        ]
-        key_passages = [
-            {
-                "section": item.section,
-                "text": AnswerGenerator._compact_text(item.text, limit=320),
-                "source_label": item.source_label,
-                "page": item.page,
-                "locator": item.locator,
-            }
-            for item in passages[:5]
-        ]
-        return {
-            "paper_id": paper.paper_id,
-            "title": paper.title,
-            "year": paper.year,
-            "venue": paper.venue,
-            "authors": paper.authors,
-            "source_label": paper.source_label,
-            "summary": AnswerGenerator._compact_text(paper.summary, limit=900),
-            "methods": paper.methods[:5],
-            "findings": paper.findings[:5],
-            "limitations": paper.limitations[:5],
-            "terms": terms,
-            "suggested_questions": suggested_questions,
-            "key_passages": key_passages,
-        }
-
-    def _extract_terms(self, paper, limit: int = 12) -> list[str]:
-        terms: list[str] = []
-        for topic in paper.topics:
-            if topic and topic not in terms:
-                terms.append(topic)
-        text = f"{paper.title} {paper.summary}"
-        candidates = re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}(?:\s+[A-Za-z][A-Za-z0-9-]{2,})?", text)
-        for candidate in candidates:
-            normalized = " ".join(candidate.split())
-            if normalized.lower() in {"this paper", "the paper", "and the", "with the"}:
-                continue
-            if normalized not in terms:
-                terms.append(normalized)
-            if len(terms) >= limit:
-                break
-        return terms[:limit]
-
-    def generate_deep_review(self, topic: str, top_k: int = 5) -> dict:
-        ranked = self.search_papers(topic, top_k=top_k)
-        paper_ids = [item["paper_id"] for item in ranked]
-        review = self.generate_review(topic, top_k=top_k)
-        papers = [self.corpus.get_paper(paper_id) for paper_id in paper_ids if paper_id in self.corpus.paper_by_id]
-        timeline = [
-            {
-                "paper_id": paper.paper_id,
-                "title": paper.title,
-                "year": paper.year,
-                "venue": paper.venue,
-            }
-            for paper in sorted(papers, key=lambda item: item.year)
-        ]
-        evidence = self._retrieve_evidence(topic, top_k=max(top_k, 5), trace=[])
-        return {
-            "topic": topic,
-            "overview": review.overview,
-            "outline": [
-                {"title": "研究背景", "body": AnswerGenerator._compact_text(review.overview, limit=520)},
-                {"title": "代表工作", "items": review.representative_papers},
-                {"title": "方法脉络", "items": review.trends},
-                {"title": "开放问题", "items": review.open_problems},
-            ],
-            "representative_papers": review.representative_papers,
-            "reading_order": review.reading_order,
-            "open_problems": review.open_problems,
-            "timeline": timeline,
-            "evidence": [item.model_dump() for item in evidence[:top_k]],
-            "trace": [item.model_dump() for item in review.trace],
-        }
-
-    def get_system_status(self) -> dict:
-        from .hybrid import BM25_WEIGHT, FUSION_METHOD, TFIDF_WEIGHT, VECTOR_WEIGHT
-
-        imported_count = len(self.corpus.list_imported_papers())
-        return {
-            "model": {
-                "provider": "dashscope" if self.llm.enabled else "local",
-                "chat_enabled": self.llm.enabled,
-                "model": self.llm.model if self.llm.enabled else "rule-based",
-                "embedding_enabled": self.llm.embedding_enabled,
-                "embedding_model": self.llm.embedding_model,
-                "rerank_enabled": self.llm.rerank_enabled,
-                "rerank_model": self.llm.rerank_model,
-            },
-            "corpus": {
-                "documents": len(self.corpus.papers),
-                "base_documents": len(self.corpus.base_papers),
-                "imported_documents": imported_count,
-                "passages": len(self.corpus.passages),
-            },
-            "retrieval": {
-                "fusion_method": FUSION_METHOD,
-                "weights": {
-                    "tfidf": TFIDF_WEIGHT,
-                    "bm25": BM25_WEIGHT,
-                    "vector": VECTOR_WEIGHT,
-                },
-                "vector_enabled": self.vector_rag.enabled,
-                "query_cache_size": len(self._query_cache),
-            },
-            "usage": self.llm.usage_tracker.summary(),
-        }
-
     def import_document(self, path: str | Path, original_name: str | None = None) -> dict:
         self._query_cache.clear()
         paper = build_imported_paper(path, original_name=original_name)
@@ -606,6 +500,169 @@ class ResearchAssistant:
             )
         return None
 
+    def _prepare_research_answer(
+        self,
+        question: str,
+        history: list[ConversationMessage],
+        top_k: int,
+        *,
+        use_rerank: bool,
+        self_correct: bool,
+    ) -> _ResearchPrep:
+        """Shared retrieval path for sync and streaming research answers."""
+        ag = self.answer_generator
+        trace: list[ToolTrace] = []
+        self._last_retrieval_diagnostics = {}
+        retrieval_query = ag._build_contextual_query(question, history, trace)
+
+        multi_hop_result = self._run_multi_hop(
+            question, retrieval_query, top_k, trace, history, use_rerank=use_rerank
+        )
+        if multi_hop_result is not None:
+            return _ResearchPrep(
+                retrieval_query=retrieval_query,
+                evidence=[],
+                trace=trace,
+                retrieval_diagnostics={},
+                early_result=multi_hop_result,
+            )
+
+        if self_correct and self.llm.enabled:
+            from .self_correct import self_correct_retrieval  # fmt: skip
+
+            def _retrieve_for_self_correct(q: str, k: int) -> list[Evidence]:
+                return self._retrieve_evidence(q, top_k=k, trace=trace, use_rerank=use_rerank)
+
+            raw_evidence = self_correct_retrieval(
+                query=retrieval_query,
+                retrieval_fn=_retrieve_for_self_correct,
+                llm_client=self.llm,
+                top_k=max(top_k * 3, 6),
+                max_rounds=3,
+                threshold=0.4,
+                trace=trace,
+            )
+        else:
+            raw_evidence = self._retrieve_evidence(
+                retrieval_query, top_k=max(top_k * 3, 6), trace=trace, use_rerank=use_rerank
+            )
+
+        retrieval_diagnostics = dict(getattr(self, "_last_retrieval_diagnostics", {}) or {})
+        evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k, question=question)
+
+        crag_decision = None
+        retrieval_confidence = 0.0
+        if evidence and self_correct and self.llm.enabled:
+            from .self_correct import crag_evaluate, CRAGDecision  # fmt: skip
+
+            crag_decision, retrieval_confidence = crag_evaluate(
+                query=retrieval_query,
+                evidence=evidence,
+                llm_client=self.llm,
+                trace=trace,
+            )
+            if crag_decision == CRAGDecision.DECLINE:
+                result = ag._insufficient_evidence_answer(question, trace)
+                result.retrieval_confidence = retrieval_confidence
+                result.question_type = "research"
+                result.diagnostics = retrieval_diagnostics
+                return _ResearchPrep(
+                    retrieval_query=retrieval_query,
+                    evidence=evidence,
+                    trace=trace,
+                    retrieval_diagnostics=retrieval_diagnostics,
+                    crag_decision=crag_decision,
+                    retrieval_confidence=retrieval_confidence,
+                    early_result=result,
+                )
+
+        return _ResearchPrep(
+            retrieval_query=retrieval_query,
+            evidence=evidence,
+            trace=trace,
+            retrieval_diagnostics=retrieval_diagnostics,
+            crag_decision=crag_decision,
+            retrieval_confidence=retrieval_confidence,
+        )
+
+    def _finalize_research_answer(
+        self,
+        question: str,
+        prep: _ResearchPrep,
+        *,
+        top_k: int,
+        strict_grounded: bool,
+        history: list[ConversationMessage],
+        use_rerank: bool,
+    ) -> AnswerResult:
+        ag = self.answer_generator
+        if prep.early_result is not None:
+            return prep.early_result
+
+        ctx = self._build_pipeline_context(
+            question=question,
+            retrieval_query=prep.retrieval_query,
+            top_k=top_k,
+            strict_grounded=strict_grounded,
+            history=history,
+            trace=prep.trace,
+            use_rerank=use_rerank,
+        )
+        ctx.diagnostics = prep.retrieval_diagnostics
+        ctx.evidence = prep.evidence
+
+        if not prep.evidence:
+            if strict_grounded:
+                result = ag._insufficient_evidence_answer(question, prep.trace)
+            elif self.llm.enabled:
+                try:
+                    result = self._llm_general_answer(question, prep.trace)
+                except Exception as exc:
+                    prep.trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
+                    result = AnswerResult(
+                        question=question,
+                        answer=(
+                            "当前本地语料库中没有找到相关证据。"
+                            if ag._prefers_chinese(question)
+                            else "No relevant evidence was found in the local corpus."
+                        ),
+                        evidence=[],
+                        trace=prep.trace,
+                        insufficient_evidence=True,
+                    )
+            else:
+                result = AnswerResult(
+                    question=question,
+                    answer=(
+                        "当前本地语料库中没有找到相关证据。"
+                        if ag._prefers_chinese(question)
+                        else "No relevant evidence was found in the local corpus."
+                    ),
+                    evidence=[],
+                    trace=prep.trace,
+                    insufficient_evidence=True,
+                )
+            result.diagnostics = ctx.diagnostics
+        else:
+            Pipeline([GenerateStep(), AuditStep()]).run(ctx)
+            if self.llm.enabled and ctx.answer:
+                result = AnswerResult(
+                    question=question,
+                    answer=ctx.answer,
+                    evidence=ctx.evidence,
+                    trace=ctx.trace,
+                    claim_audit=ctx.claim_audit,
+                    contradictions=ctx.contradictions,
+                )
+            else:
+                result = ag._rule_based_answer(question, prep.evidence, prep.trace, self.corpus.get_paper)
+            result.diagnostics = ctx.diagnostics
+            if prep.crag_decision is not None:
+                result.retrieval_confidence = prep.retrieval_confidence
+
+        result.question_type = "research"
+        return result
+
     # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------
@@ -635,103 +692,21 @@ class ResearchAssistant:
             result = ag._greeting_answer(question)
         else:
             history = list(history or [])
-            trace: list[ToolTrace] = []
-            self._last_retrieval_diagnostics = {}
-            retrieval_query = ag._build_contextual_query(question, history, trace)
-
-            # ---- multi-hop decomposition (shared logic) ----
-            multi_hop_result = self._run_multi_hop(question, retrieval_query, top_k, trace, history, use_rerank=use_rerank)
-            if multi_hop_result is not None:
-                self._query_cache[cache_key] = multi_hop_result
-                self._trim_cache()
-                return multi_hop_result
-
-            # ---- self-correcting retrieval loop ----
-            if self_correct and self.llm.enabled:
-                from .self_correct import self_correct_retrieval  # fmt: skip
-
-                def _retrieve_for_self_correct(q: str, k: int) -> list[Evidence]:
-                    return self._retrieve_evidence(q, top_k=k, trace=trace, use_rerank=use_rerank)
-
-                raw_evidence = self_correct_retrieval(
-                    query=retrieval_query,
-                    retrieval_fn=_retrieve_for_self_correct,
-                    llm_client=self.llm,
-                    top_k=max(top_k * 3, 6),
-                    max_rounds=3,
-                    threshold=0.4,
-                    trace=trace,
-                )
-            else:
-                raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace, use_rerank=use_rerank)
-            retrieval_diagnostics = dict(getattr(self, "_last_retrieval_diagnostics", {}) or {})
-            evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k, question=question)
-
-            # ---- CRAG decision on final evidence ----
-            crag_decision = None
-            retrieval_confidence = 0.0
-            if evidence and self_correct and self.llm.enabled:
-                from .self_correct import crag_evaluate, CRAGDecision  # fmt: skip
-
-                crag_decision, retrieval_confidence = crag_evaluate(
-                    query=retrieval_query,
-                    evidence=evidence,
-                    llm_client=self.llm,
-                    trace=trace,
-                )
-                if crag_decision == CRAGDecision.DECLINE:
-                    result = ag._insufficient_evidence_answer(question, trace)
-                    result.retrieval_confidence = retrieval_confidence
-                    result.question_type = "research"
-                    result.diagnostics = retrieval_diagnostics
-                    self._query_cache[cache_key] = result
-                    self._trim_cache()
-                    return result
-
-            # ---- Standard pipeline: Generate + Audit ----
-            ctx = self._build_pipeline_context(
-                question=question, retrieval_query=retrieval_query,
-                top_k=top_k, strict_grounded=strict_grounded,
-                history=history, trace=trace, use_rerank=use_rerank,
+            prep = self._prepare_research_answer(
+                question,
+                history,
+                top_k,
+                use_rerank=use_rerank,
+                self_correct=self_correct,
             )
-            ctx.diagnostics = retrieval_diagnostics
-            ctx.evidence = evidence
-
-            if not evidence:
-                if strict_grounded:
-                    result = ag._insufficient_evidence_answer(question, trace)
-                elif self.llm.enabled:
-                    try:
-                        result = self._llm_general_answer(question, trace)
-                    except Exception as exc:
-                        trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
-                        result = AnswerResult(
-                            question=question,
-                            answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
-                            evidence=[], trace=trace, insufficient_evidence=True,
-                        )
-                else:
-                    result = AnswerResult(
-                        question=question,
-                        answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
-                        evidence=[], trace=trace, insufficient_evidence=True,
-                    )
-                result.diagnostics = ctx.diagnostics
-            else:
-                pipeline_result = Pipeline([GenerateStep(), AuditStep()]).run(ctx)
-                diag = ctx.diagnostics
-                if self.llm.enabled and ctx.answer:
-                    result = AnswerResult(
-                        question=question, answer=ctx.answer,
-                        evidence=ctx.evidence, trace=ctx.trace,
-                        claim_audit=ctx.claim_audit,
-                        contradictions=ctx.contradictions,
-                    )
-                else:
-                    result = ag._rule_based_answer(question, evidence, trace, self.corpus.get_paper)
-                result.diagnostics = diag
-                if crag_decision is not None:
-                    result.retrieval_confidence = retrieval_confidence
+            result = self._finalize_research_answer(
+                question,
+                prep,
+                top_k=top_k,
+                strict_grounded=strict_grounded,
+                history=history,
+                use_rerank=use_rerank,
+            )
 
         result.question_type = question_type
         self._query_cache[cache_key] = result
@@ -764,92 +739,52 @@ class ResearchAssistant:
             return
 
         history = list(history or [])
-        trace: list[ToolTrace] = []
-        self._last_retrieval_diagnostics = {}
-        retrieval_query = ag._build_contextual_query(question, history, trace)
+        yield {"type": "step", "step": "retrieve"}
+        prep = self._prepare_research_answer(
+            question,
+            history,
+            top_k,
+            use_rerank=use_rerank,
+            self_correct=self_correct,
+        )
+        yield {"type": "step", "step": "decompose"}
 
-        # ---- multi-hop decomposition (shared logic) ----
-        multi_hop_result = self._run_multi_hop(question, retrieval_query, top_k, trace, history, use_rerank=use_rerank)
-        if multi_hop_result is not None:
-            for chunk in ag._iter_text_chunks(multi_hop_result.answer):
+        if prep.early_result is not None:
+            yield {"type": "step", "step": "generate"}
+            for chunk in ag._iter_text_chunks(prep.early_result.answer):
                 yield {"type": "chunk", "delta": chunk}
-            yield {"type": "final", "data": multi_hop_result.model_dump()}
+            yield {"type": "final", "data": prep.early_result.model_dump()}
             return
 
-        # ---- self-correcting retrieval loop ----
-        if self_correct and self.llm.enabled:
-            from .self_correct import self_correct_retrieval  # fmt: skip
-
-            def _retrieve_for_self_correct(q: str, k: int) -> list[Evidence]:
-                return self._retrieve_evidence(q, top_k=k, trace=trace, use_rerank=use_rerank)
-
-            raw_evidence = self_correct_retrieval(
-                query=retrieval_query,
-                retrieval_fn=_retrieve_for_self_correct,
-                llm_client=self.llm,
-                top_k=max(top_k * 3, 6),
-                max_rounds=3,
-                threshold=0.4,
-                trace=trace,
-            )
-        else:
-            raw_evidence = self._retrieve_evidence(retrieval_query, top_k=max(top_k * 3, 6), trace=trace, use_rerank=use_rerank)
-        retrieval_diagnostics = dict(getattr(self, "_last_retrieval_diagnostics", {}) or {})
-        evidence = ag._rank_evidence_for_answer(raw_evidence, top_k=top_k, question=question)
-
-        # ---- CRAG decision on final evidence ----
-        if evidence and self_correct and self.llm.enabled:
-            from .self_correct import crag_evaluate, CRAGDecision  # fmt: skip
-
-            crag_decision, retrieval_confidence = crag_evaluate(
-                query=retrieval_query,
-                evidence=evidence,
-                llm_client=self.llm,
-                trace=trace,
-            )
-            if crag_decision == CRAGDecision.DECLINE:
-                result = ag._insufficient_evidence_answer(question, trace)
-                result.retrieval_confidence = retrieval_confidence
-                result.question_type = "research"
-                result.diagnostics = retrieval_diagnostics
-                for chunk in ag._iter_text_chunks(result.answer):
-                    yield {"type": "chunk", "delta": chunk}
-                yield {"type": "final", "data": result.model_dump()}
-                return
-
+        evidence = prep.evidence
+        trace = prep.trace
         ctx = self._build_pipeline_context(
-            question=question, retrieval_query=retrieval_query,
-            top_k=top_k, strict_grounded=strict_grounded,
-            history=history, trace=trace, use_rerank=use_rerank,
+            question=question,
+            retrieval_query=prep.retrieval_query,
+            top_k=top_k,
+            strict_grounded=strict_grounded,
+            history=history,
+            trace=trace,
+            use_rerank=use_rerank,
         )
-        ctx.diagnostics = retrieval_diagnostics
+        ctx.diagnostics = prep.retrieval_diagnostics
         ctx.evidence = evidence
 
         if not evidence:
-            if strict_grounded:
-                result = ag._insufficient_evidence_answer(question, trace)
-            elif self.llm.enabled:
-                try:
-                    result = self._llm_general_answer(question, trace)
-                except Exception as exc:
-                    trace.append(ToolTrace(tool="langchain_chat_error", input=question, output=str(exc)))
-                    result = AnswerResult(
-                        question=question,
-                        answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
-                        evidence=[], trace=trace, insufficient_evidence=True,
-                    )
-            else:
-                result = AnswerResult(
-                    question=question,
-                    answer="当前本地语料库中没有找到相关证据。" if ag._prefers_chinese(question) else "No relevant evidence was found in the local corpus.",
-                    evidence=[], trace=trace, insufficient_evidence=True,
-                )
-            result.diagnostics = ctx.diagnostics
+            result = self._finalize_research_answer(
+                question,
+                prep,
+                top_k=top_k,
+                strict_grounded=strict_grounded,
+                history=history,
+                use_rerank=use_rerank,
+            )
             for chunk in ag._iter_text_chunks(result.answer):
                 yield {"type": "chunk", "delta": chunk}
             yield {"type": "final", "data": result.model_dump()}
             return
 
+        yield {"type": "step", "step": "generate"}
         if self.llm.enabled:
             chunks: list[str] = []
             for delta in ag._llm_answer_stream(question, evidence, trace, history=history):
@@ -865,11 +800,17 @@ class ResearchAssistant:
                     embedding_client=embedding,
                 )
                 result.diagnostics = ctx.diagnostics
+                if prep.crag_decision is not None:
+                    result.retrieval_confidence = prep.retrieval_confidence
+                yield {"type": "step", "step": "cite"}
                 yield {"type": "final", "data": result.model_dump()}
                 return
 
         result = ag._rule_based_answer(question, evidence, trace, self.corpus.get_paper)
         result.diagnostics = ctx.diagnostics
+        if prep.crag_decision is not None:
+            result.retrieval_confidence = prep.retrieval_confidence
+        yield {"type": "step", "step": "cite"}
         for chunk in ag._iter_text_chunks(result.answer):
             yield {"type": "chunk", "delta": chunk}
         yield {"type": "final", "data": result.model_dump()}

@@ -472,14 +472,20 @@ class AnswerGenerator:
     # helper: build prompts for LLM calls
     # ------------------------------------------------------------------
 
-    def _build_history_block(self, history: list[ConversationMessage], limit: int = 4) -> str:
+    def _build_history_block(self, history: list[ConversationMessage] | list[dict], limit: int = 4) -> str:
         if not history:
             return ""
         recent_history = history[-limit:]
-        return "\n".join(
-            f"{item.role.title()}: {self._compact_text(item.content, limit=220)}"
-            for item in recent_history
-        )
+        lines: list[str] = []
+        for item in recent_history:
+            if isinstance(item, dict):
+                role = str(item.get("role") or "user")
+                content = str(item.get("content") or "")
+            else:
+                role = item.role
+                content = item.content
+            lines.append(f"{role.title()}: {self._compact_text(content, limit=220)}")
+        return "\n".join(lines)
 
     @staticmethod
     def _format_source_info(item: Evidence) -> str:
@@ -629,32 +635,6 @@ class AnswerGenerator:
             )
         ]
         return AnswerResult(question=question, answer=answer, evidence=[], trace=trace, question_type="system")
-
-        if self.llm.enabled:
-            answer = (
-                f"我当前通过阿里云 DashScope 的 OpenAI 兼容接口调用 {self.llm.model} 模型回答，"
-                f"检索层使用混合检索（TF-IDF + BM25 + LangChain FAISS）、{self.llm.rerank_model} 重排和 {self.llm.embedding_model} 向量表示。"
-            )
-            trace = [
-                ToolTrace(
-                    tool="system_info",
-                    input=question,
-                    output=(
-                        f"provider=dashscope, model={self.llm.model}, "
-                        f"retrieval=tfidf+bm25+vector, embedding={self.llm.embedding_model}, rerank={self.llm.rerank_model}"
-                    ),
-                )
-            ]
-        else:
-            answer = "我当前运行的是本地规则版，未启用 DashScope、云端大模型、向量检索或重排；本地检索仍使用 TF-IDF + BM25 + 查询扩展。"
-            trace = [
-                ToolTrace(
-                    tool="system_info",
-                    input=question,
-                    output="provider=local, model=rule-based, retrieval=tfidf+bm25+query-expansion, vector=disabled, rerank=disabled",
-                )
-            ]
-        return self._with_claim_audit(AnswerResult(question=question, answer=answer, evidence=[], trace=trace))
 
     def _meta_answer(self, question: str) -> AnswerResult:
         prefers_chinese = self._prefers_chinese(question)

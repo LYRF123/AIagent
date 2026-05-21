@@ -1,0 +1,26 @@
+.env
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Local runtime data (see data/README.md)
+data/sessions.json
+data/model_profiles.json
+data/imported_papers.json
+data/index_meta.json
+data/models/
+
+# User uploads (keep directory marker)
+uploads/*
+!uploads/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
