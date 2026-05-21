@@ -28,7 +28,15 @@ class ResearchApp:
     def delete_session(self, session_id: str) -> SessionSummary:
         return self.session_store.delete_session(session_id)
 
-    def ask(self, question: str, top_k: int = 5, session_id: str | None = None, strict_grounded: bool = True, use_rerank: bool = True) -> AnswerResult:
+    def ask(
+        self,
+        question: str,
+        top_k: int = 5,
+        session_id: str | None = None,
+        strict_grounded: bool = True,
+        use_rerank: bool = True,
+        self_correct: bool = True,
+    ) -> AnswerResult:
         prior_history: list[ConversationMessage] = []
         if session_id:
             active_session = self.session_store.get_session(session_id)
@@ -41,6 +49,7 @@ class ResearchApp:
             strict_grounded=strict_grounded,
             history=prior_history,
             use_rerank=use_rerank,
+            self_correct=self_correct,
         )
         updated_session = self.session_store.append_turn(active_session.session_id, question, answer.answer)
         answer.session_id = updated_session.session_id
@@ -48,7 +57,15 @@ class ResearchApp:
         answer.history = list(updated_session.messages)
         return answer
 
-    def ask_stream(self, question: str, top_k: int = 5, session_id: str | None = None, strict_grounded: bool = True, use_rerank: bool = True) -> Iterator[dict]:
+    def ask_stream(
+        self,
+        question: str,
+        top_k: int = 5,
+        session_id: str | None = None,
+        strict_grounded: bool = True,
+        use_rerank: bool = True,
+        self_correct: bool = True,
+    ) -> Iterator[dict]:
         prior_history: list[ConversationMessage] = []
         if session_id:
             active_session = self.session_store.get_session(session_id)
@@ -70,6 +87,7 @@ class ResearchApp:
             strict_grounded=strict_grounded,
             history=prior_history,
             use_rerank=use_rerank,
+            self_correct=self_correct,
         ):
             if event.get("type") != "final":
                 yield event

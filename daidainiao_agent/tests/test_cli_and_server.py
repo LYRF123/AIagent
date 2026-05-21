@@ -213,3 +213,40 @@ def test_update_model_settings_keeps_each_saved_profile(monkeypatch, tmp_path) -
     assert profiles[0]["id"] != profiles[1]["id"]
     assert second.json()["active_profile_id"] == profiles[0]["id"]
     assert "api_key" not in profiles[0]
+
+
+def test_export_markdown_returns_filename_and_body() -> None:
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        response = client.post(
+            "/export/markdown",
+            json={
+                "data": {
+                    "question": "What is ReAct?",
+                    "answer": "ReAct alternates reasoning and actions.",
+                    "evidence": [],
+                    "trace": [],
+                }
+            },
+        )
+    finally:
+        fastapi_server._rate_limits.clear()
+    assert response.status_code == 200
+    payload = response.json()
+    assert "ReAct" in payload["markdown"]
+    assert payload["filename"].endswith(".md")
+
+
+def test_api_token_middleware_blocks_without_bearer(monkeypatch) -> None:
+    monkeypatch.setenv("DAIDAINIAO_API_TOKEN", "secret-token")
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        denied = client.get("/sessions")
+        allowed = client.get("/sessions", headers={"Authorization": "Bearer secret-token"})
+    finally:
+        fastapi_server._rate_limits.clear()
+        monkeypatch.delenv("DAIDAINIAO_API_TOKEN", raising=False)
+    assert denied.status_code == 401
+    assert allowed.status_code == 200

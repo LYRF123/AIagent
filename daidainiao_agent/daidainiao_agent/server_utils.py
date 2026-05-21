@@ -31,6 +31,20 @@ def cors_allow_credentials() -> bool:
     return os.getenv("DAIDAINIAO_CORS_CREDENTIALS", "").strip().lower() in ("1", "true", "yes")
 
 
+def api_token_required() -> str:
+    return os.getenv("DAIDAINIAO_API_TOKEN", "").strip()
+
+
+def verify_api_token(authorization: str | None) -> bool:
+    expected = api_token_required()
+    if not expected:
+        return True
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return False
+    token = authorization[7:].strip()
+    return token == expected
+
+
 def rate_limit_exempt(path: str) -> bool:
     if path in RATE_LIMIT_EXEMPT_PATHS:
         return True

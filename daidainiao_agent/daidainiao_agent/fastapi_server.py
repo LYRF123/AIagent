@@ -25,14 +25,17 @@ from .model_profiles import (
     public_profile,
     resolve_active_profile_id,
 )
+from .export import format_answer_markdown
 from .server_utils import (
     MAX_JSON_BODY_BYTES,
     MAX_UPLOAD_BYTES,
     PROJECT_ROOT,
+    api_token_required,
     cors_allow_credentials,
     default_cors_origins,
     rate_limit_exempt,
     resolve_data_path,
+    verify_api_token,
 )
 
 CORPUS_PATH = os.getenv("DAIDAINIAO_AGENT_CORPUS") or os.getenv("RESEARCH_AGENT_CORPUS")
@@ -73,6 +76,15 @@ app.add_middleware(
 # In-memory rate limit (per process; not shared across workers)
 _rate_limits: dict[str, list[float]] = {}
 _rate_lock = threading.Lock()
+
+
+@app.middleware("http")
+async def api_token_middleware(request: Request, call_next):
+    if api_token_required() and request.method != "OPTIONS":
+        auth = request.headers.get("authorization")
+        if not verify_api_token(auth):
+            return JSONResponse(status_code=401, content={"error": "unauthorized"})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -186,6 +198,7 @@ async def ask(request: Request):
         session_id=payload.get("session_id"),
         strict_grounded=bool(payload.get("strict_grounded", True)),
         use_rerank=bool(payload.get("use_rerank", True)),
+        self_correct=bool(payload.get("self_correct", True)),
     ).model_dump()
     return result
 
@@ -203,6 +216,7 @@ async def ask_stream(request: Request):
                 session_id=payload.get("session_id"),
                 strict_grounded=bool(payload.get("strict_grounded", True)),
                 use_rerank=bool(payload.get("use_rerank", True)),
+                self_correct=bool(payload.get("self_correct", True)),
             ):
                 event_type = str(event.get("type", "message"))
                 if event_type == "step":
@@ -378,6 +392,32 @@ async def rag_lab_evaluate(request: Request):
         default_candidate_k=payload.get("candidate_k"),
     )
 
+
+
+@app.post("/export/markdown")
+async def export_markdown(request: Request):
+    payload = await request.json()
+    data = payload.get("data")
+    if data is None and payload.get("session_id"):
+        try:
+            session = get_app().get_session(str(payload["session_id"]))
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        messages = session.messages
+        if len(messages) < 2:
+            raise HTTPException(status_code=400, detail="会话中没有可导出的回答。")
+        question = messages[-2].content
+        answer = messages[-1].content
+        data = {"question": question, "answer": answer, "evidence": [], "trace": []}
+    if not isinstance(data, dict) or not data.get("answer"):
+        raise HTTPException(status_code=400, detail="需要包含 answer 的 data 或有效 session_id。")
+    markdown = format_answer_markdown(data)
+    title = (data.get("question") or "answer")[:40].strip() or "answer"
+    safe_title = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in title)
+    return {
+        "markdown": markdown,
+        "filename": f"{safe_title}.md",
+    }
 
 
 @app.post("/deep-review")

@@ -41,6 +41,10 @@
               <span aria-hidden="true">⌕</span>
               历史对话
             </button>
+            <label class="session-search-label">
+              <span class="visually-hidden">搜索会话</span>
+              <input id="session-search" class="session-search-input" type="search" placeholder="搜索会话…" autocomplete="off" />
+            </label>
             <div class="sidebar-history" id="sessions-output">
               <p class="empty-note">还没有会话。</p>
             </div>
@@ -149,7 +153,8 @@
             <section class="workspace-view" data-workspace-view="lab">
               <div class="workspace-section-head">
                 <h3>RAG Lab</h3>
-                <button id="workspace-run-lab" class="primary-button compact-button" type="button">运行对比</button>
+                <button id="workspace-run-lab-baseline" class="ghost-button compact-button" type="button">一键 Baseline</button>
+                <button id="workspace-run-lab" class="primary-button compact-button" type="button">Fusion vs 重排</button>
               </div>
               <div class="workspace-form-row">
                 <label>Top K <input id="workspace-lab-top-k" type="number" min="1" max="8" value="5" /></label>

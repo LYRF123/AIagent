@@ -1,5 +1,6 @@
-import { getCurrentSessionId, setCurrentSessionId } from "./state.js";
+import { getCurrentSessionId, setCurrentSessionId, loadSettings } from "./state.js";
 import { refreshSessions } from "./api.js";
+import { renderLatestEvidence } from "./workspace.js";
 import {
   appendUserMessage,
   appendAssistantMessage,
@@ -121,6 +122,11 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
     }
     usingSimulatedSteps = false;
     clearTimeout(stepTimer);
+    const retrievalSub = ["tfidf", "bm25", "vector", "fusion", "rerank"];
+    if (retrievalSub.includes(stepName)) {
+      updateThinkingSteps(thinkingEl, { activeStep: "retrieve", doneSteps: [] });
+      return;
+    }
     const order = ["retrieve", "decompose", "generate", "cite"];
     const index = order.indexOf(stepName);
     if (index < 0) {
@@ -192,6 +198,20 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
 
     await readEventStream(response, (eventType, data) => {
       if (eventType === "step") {
+        const subLabels = {
+          tfidf: "TF-IDF",
+          bm25: "BM25",
+          vector: "向量",
+          fusion: "融合",
+          rerank: "重排",
+          retrieve: "检索",
+          decompose: "拆解",
+          generate: "生成",
+          cite: "引用",
+        };
+        if (["tfidf", "bm25", "vector", "fusion", "rerank"].includes(data.step)) {
+          publishStreamStatus(`检索：${subLabels[data.step] || data.step}…`);
+        }
         applyPipelineStep(data.step);
         return;
       }
@@ -251,6 +271,10 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
     if (finalPayload.session_id) {
       setCurrentSessionId(finalPayload.session_id);
       await refreshSessions(finalPayload.session_id);
+    }
+    const settings = loadSettings();
+    if (settings.autoSyncEvidence !== false) {
+      renderLatestEvidence();
     }
   } catch (error) {
     if (error.name === "AbortError") {

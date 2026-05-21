@@ -53,12 +53,14 @@ def write_text_pdf(path, pages: list[str]) -> None:
     path.write_bytes(pdf.encode("ascii"))
 
 
+@pytest.mark.slow
 def test_search_returns_self_rag_for_reflection_query(daidainiao_agent) -> None:
     results = daidainiao_agent.search_papers("self reflection retrieval critique", top_k=3)
     assert results
     assert results[0]["paper_id"] == "self-rag"
 
 
+@pytest.mark.slow
 def test_answer_contains_evidence(daidainiao_agent) -> None:
     answer = daidainiao_agent.answer_question("How does ReAct use external observations?", top_k=3)
     cited_ids = {item.paper_id for item in answer.evidence}
@@ -72,6 +74,7 @@ def test_compare_by_ids(daidainiao_agent) -> None:
     assert row_ids == ["autogen", "metagpt"]
 
 
+@pytest.mark.slow
 def test_eval_pipeline_runs(daidainiao_agent) -> None:
     metrics = run_evaluation(daidainiao_agent)
     assert metrics["num_cases"] == 4
@@ -404,6 +407,7 @@ def test_ragas_eval_is_skipped_without_model_key(daidainiao_agent) -> None:
     assert "DASHSCOPE_API_KEY" in metrics["ragas"]["reason"]
 
 
+@pytest.mark.slow
 def test_ragas_evaluation_produces_correct_structure(daidainiao_agent) -> None:
     """Ragas evaluation with mocked LLM returns correct payload structure."""
     import sys
@@ -537,6 +541,7 @@ def test_answer_question_accepts_self_correct_param(daidainiao_agent) -> None:
     assert "observations" in answer.answer.lower()
 
 
+@pytest.mark.slow
 def test_answer_question_includes_retrieval_diagnostics(daidainiao_agent) -> None:
     answer = daidainiao_agent.answer_question(
         "How does ReAct use external observations?",

@@ -381,8 +381,25 @@ class ResearchAssistant:
         resolved = Path(path).resolve(strict=False)
         return resolved == root or root in resolved.parents
 
-    def _retrieve_evidence(self, query: str, top_k: int, trace: list[ToolTrace], use_rerank: bool = True) -> list[Evidence]:
-        result = self.hybrid_retriever.search(query, top_k=max(top_k, 5), candidate_k=max(top_k * 4, 20), use_rerank=use_rerank)
+    def _retrieve_evidence(
+        self,
+        query: str,
+        top_k: int,
+        trace: list[ToolTrace],
+        use_rerank: bool = True,
+        step_sink: list[dict] | None = None,
+    ) -> list[Evidence]:
+        def on_stage(name: str, status: str) -> None:
+            if step_sink is not None:
+                step_sink.append({"type": "step", "step": name, "status": status})
+
+        result = self.hybrid_retriever.search(
+            query,
+            top_k=max(top_k, 5),
+            candidate_k=max(top_k * 4, 20),
+            use_rerank=use_rerank,
+            on_stage=on_stage,
+        )
         trace.extend(ToolTrace(**item) for item in result.trace)
         self._last_retrieval_diagnostics = result.diagnostics
         return result.evidence
@@ -508,6 +525,7 @@ class ResearchAssistant:
         *,
         use_rerank: bool,
         self_correct: bool,
+        step_sink: list[dict] | None = None,
     ) -> _ResearchPrep:
         """Shared retrieval path for sync and streaming research answers."""
         ag = self.answer_generator
@@ -531,7 +549,9 @@ class ResearchAssistant:
             from .self_correct import self_correct_retrieval  # fmt: skip
 
             def _retrieve_for_self_correct(q: str, k: int) -> list[Evidence]:
-                return self._retrieve_evidence(q, top_k=k, trace=trace, use_rerank=use_rerank)
+                return self._retrieve_evidence(
+                    q, top_k=k, trace=trace, use_rerank=use_rerank, step_sink=step_sink
+                )
 
             raw_evidence = self_correct_retrieval(
                 query=retrieval_query,
@@ -544,7 +564,11 @@ class ResearchAssistant:
             )
         else:
             raw_evidence = self._retrieve_evidence(
-                retrieval_query, top_k=max(top_k * 3, 6), trace=trace, use_rerank=use_rerank
+                retrieval_query,
+                top_k=max(top_k * 3, 6),
+                trace=trace,
+                use_rerank=use_rerank,
+                step_sink=step_sink,
             )
 
         retrieval_diagnostics = dict(getattr(self, "_last_retrieval_diagnostics", {}) or {})
@@ -698,6 +722,7 @@ class ResearchAssistant:
                 top_k,
                 use_rerank=use_rerank,
                 self_correct=self_correct,
+                step_sink=None,
             )
             result = self._finalize_research_answer(
                 question,
@@ -740,14 +765,19 @@ class ResearchAssistant:
 
         history = list(history or [])
         yield {"type": "step", "step": "retrieve"}
+        step_sink: list[dict] = []
         prep = self._prepare_research_answer(
             question,
             history,
             top_k,
             use_rerank=use_rerank,
             self_correct=self_correct,
+            step_sink=step_sink,
         )
-        yield {"type": "step", "step": "decompose"}
+        for sub_step in step_sink:
+            yield sub_step
+        if self.llm.enabled:
+            yield {"type": "step", "step": "decompose"}
 
         if prep.early_result is not None:
             yield {"type": "step", "step": "generate"}

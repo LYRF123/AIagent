@@ -246,6 +246,64 @@ export async function renderReadingBrief(paperId) {
   }
 }
 
+function renderLabResults(payload) {
+  const summary = payload.summary || [];
+  const failures = payload.failures || [];
+  const perCase = payload.per_case || [];
+  return `
+    <div class="workspace-stack">
+      <div class="workspace-metrics-row">
+        ${renderMiniMetric("Cases", payload.num_cases || 0)}
+        ${renderMiniMetric("失败项", failures.length)}
+        ${renderMiniMetric("配置", summary.length)}
+      </div>
+      ${summary.map((row) => `
+        <article class="workspace-card workspace-card-highlight">
+          <div class="workspace-card-head">
+            <strong>${escapeHtml(row.config_id)}</strong>
+            <span>${row.use_rerank ? "rerank" : "fusion"}</span>
+          </div>
+          <div class="workspace-metrics-row">
+            ${renderMiniMetric("hit@k", formatPercent(row.hit_at_k))}
+            ${renderMiniMetric("MRR", row.mrr)}
+            ${renderMiniMetric("关键词", formatPercent(row.keyword_coverage))}
+          </div>
+        </article>
+      `).join("")}
+      <div class="workspace-subsection">
+        <h4>失败案例</h4>
+        ${failures.length ? failures.slice(0, 8).map((item) => {
+          const caseRow = perCase.find((row) => row.case_id === item.case_id);
+          const question = caseRow?.question || item.question || "";
+          return `
+            <div class="failure-row">
+              <strong>${escapeHtml(item.case_id)} · ${escapeHtml(item.config_id)}</strong>
+              ${question ? `<p class="block-note">${escapeHtml(truncateText(question, 160))}</p>` : ""}
+              <span>${escapeHtml((item.reasons || []).join(", "))}</span>
+            </div>
+          `;
+        }).join("") : `<p class="settings-empty">当前配置没有失败项。</p>`}
+      </div>
+    </div>
+  `;
+}
+
+export async function runWorkspaceLabBaseline() {
+  const topK = Number(el("workspace-lab-top-k")?.value || 5);
+  const candidateK = Number(el("workspace-lab-candidate-k")?.value || 20);
+  setLoading("workspace-lab-output", "运行 Baseline（内置 demo_eval）…");
+  try {
+    const payload = await runRagLab({
+      top_k: topK,
+      candidate_k: candidateK,
+      configs: [{ config_id: "baseline", top_k: topK, candidate_k: candidateK, use_rerank: true }],
+    });
+    setOutput("workspace-lab-output", renderLabResults(payload));
+  } catch (error) {
+    setError("workspace-lab-output", error);
+  }
+}
+
 export async function runWorkspaceLab() {
   const topK = Number(el("workspace-lab-top-k")?.value || 5);
   const candidateK = Number(el("workspace-lab-candidate-k")?.value || 20);
@@ -259,39 +317,7 @@ export async function runWorkspaceLab() {
         { config_id: "rerank", top_k: topK, candidate_k: candidateK, use_rerank: true },
       ],
     });
-    const summary = payload.summary || [];
-    const failures = payload.failures || [];
-    setOutput("workspace-lab-output", `
-      <div class="workspace-stack">
-        <div class="workspace-metrics-row">
-          ${renderMiniMetric("Cases", payload.num_cases || 0)}
-          ${renderMiniMetric("失败项", failures.length)}
-          ${renderMiniMetric("配置", summary.length)}
-        </div>
-        ${summary.map((row) => `
-          <article class="workspace-card">
-            <div class="workspace-card-head">
-              <strong>${escapeHtml(row.config_id)}</strong>
-              <span>${row.use_rerank ? "rerank" : "fusion"}</span>
-            </div>
-            <div class="workspace-metrics-row">
-              ${renderMiniMetric("hit@k", formatPercent(row.hit_at_k))}
-              ${renderMiniMetric("MRR", row.mrr)}
-              ${renderMiniMetric("关键词", formatPercent(row.keyword_coverage))}
-            </div>
-          </article>
-        `).join("")}
-        <div class="workspace-subsection">
-          <h4>失败原因</h4>
-          ${failures.length ? failures.slice(0, 6).map((item) => `
-            <div class="failure-row">
-              <strong>${escapeHtml(item.case_id)} · ${escapeHtml(item.config_id)}</strong>
-              <span>${escapeHtml((item.reasons || []).join(", "))}</span>
-            </div>
-          `).join("") : `<p class="settings-empty">当前配置没有失败项。</p>`}
-        </div>
-      </div>
-    `);
+    setOutput("workspace-lab-output", renderLabResults(payload));
   } catch (error) {
     setError("workspace-lab-output", error);
   }
@@ -408,6 +434,7 @@ export function initWorkspace() {
 
   el("workspace-load-evidence")?.addEventListener("click", renderLatestEvidence);
   el("workspace-refresh-documents")?.addEventListener("click", refreshWorkspaceDocuments);
+  el("workspace-run-lab-baseline")?.addEventListener("click", runWorkspaceLabBaseline);
   el("workspace-run-lab")?.addEventListener("click", runWorkspaceLab);
   el("workspace-run-reading")?.addEventListener("click", () => renderReadingBrief());
   el("workspace-run-review")?.addEventListener("click", runWorkspaceReview);

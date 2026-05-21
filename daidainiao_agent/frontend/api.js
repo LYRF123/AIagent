@@ -1,5 +1,5 @@
 import { getCurrentSessionId, setCurrentSessionId } from "./state.js";
-import { renderSessions } from "./render/sessions.js";
+import { renderSessions, setSessionItems } from "./render/sessions.js";
 
 export async function refreshSessions(nextSessionId = getCurrentSessionId()) {
   try {
@@ -11,7 +11,7 @@ export async function refreshSessions(nextSessionId = getCurrentSessionId()) {
     } else if (!items.some((item) => item.session_id === getCurrentSessionId())) {
       setCurrentSessionId("");
     }
-    renderSessions(items);
+    setSessionItems(items);
   } catch (error) {
     console.warn("刷新会话列表失败:", error);
   }
@@ -125,6 +125,21 @@ export async function getDocumentBrief(paperId) {
     throw new Error(data.error || data.detail || `Document brief failed: ${response.status}`);
   }
   return data;
+}
+
+export async function exportMarkdown(data) {
+  const response = await fetch("/export/markdown", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ data }),
+  });
+  const body = await response.json();
+  if (!response.ok) {
+    throw new Error(body.detail || body.error || `Export failed: ${response.status}`);
+  }
+  return body;
 }
 
 export async function runRagLab(payload = {}) {

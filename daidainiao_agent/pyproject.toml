@@ -39,3 +39,6 @@ pythonpath = [
 testpaths = [
   "tests"
 ]
+markers = [
+  "slow: full hybrid retrieval or multi-case eval (skip in fast CI)",
+]

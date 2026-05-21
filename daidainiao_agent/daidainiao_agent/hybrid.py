@@ -6,7 +6,7 @@ from pathlib import Path
 import gc
 import threading
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 import re
 
 from .llm import DashScopeLangChainClient, resolve_setting
@@ -350,12 +350,22 @@ class HybridRetriever:
             for item in ranked[:top_k]
         ]
 
+    def _notify_stage(
+        self,
+        on_stage: Callable[[str, str], None] | None,
+        name: str,
+        status: str = "completed",
+    ) -> None:
+        if on_stage is not None:
+            on_stage(name, status)
+
     def search(
         self,
         query: str,
         top_k: int = 5,
         candidate_k: int = 12,
         use_rerank: bool = True,
+        on_stage: Callable[[str, str], None] | None = None,
     ) -> HybridResult:
         search_started_at = perf_counter()
         trace: list[dict[str, str]] = []
@@ -422,6 +432,7 @@ class HybridRetriever:
             )
         )
         trace.append(tfidf_trace)
+        self._notify_stage(on_stage, "tfidf")
 
         stage_started_at = perf_counter()
         bm25_hits, bm25_trace = self._collect_keyword_hits(
@@ -441,6 +452,7 @@ class HybridRetriever:
             )
         )
         trace.append(bm25_trace)
+        self._notify_stage(on_stage, "bm25")
 
         vector_hits: list[Evidence] = []
         if self.vector_retriever.enabled:
@@ -465,6 +477,7 @@ class HybridRetriever:
                         "output": f"{vector_method}: " + ", ".join(f"{item.paper_id}:{item.section}" for item in vector_hits),
                     }
                 )
+                self._notify_stage(on_stage, "vector")
             except Exception as exc:
                 remote_error = str(exc)
                 try:
@@ -487,6 +500,7 @@ class HybridRetriever:
                             "output": ", ".join(f"{item.paper_id}:{item.section}" for item in vector_hits),
                         }
                     )
+                    self._notify_stage(on_stage, "vector")
                 except Exception as local_exc:
                     stages.append(
                         self._stage_record(
@@ -515,6 +529,7 @@ class HybridRetriever:
                     reason="vector_retriever_disabled",
                 )
             )
+            self._notify_stage(on_stage, "vector", "skipped")
 
         stage_started_at = perf_counter()
         merged = self._merge_candidates(tfidf_hits, bm25_hits, vector_hits)
@@ -544,6 +559,7 @@ class HybridRetriever:
                 "output": ", ".join(f"{item.paper_id}:{item.section}" for item in merged[:candidate_k]),
             }
         )
+        self._notify_stage(on_stage, "fusion")
 
         if not use_rerank:
             fusion_ranked = merged[:top_k]
@@ -572,6 +588,7 @@ class HybridRetriever:
                 }
             )
             diagnostics["latency_ms"] = self._elapsed_ms(search_started_at)
+            self._notify_stage(on_stage, "rerank", "skipped")
             return HybridResult(evidence=fusion_ranked, trace=trace, diagnostics=diagnostics)
 
         if not self.llm_client.rerank_enabled:
@@ -607,6 +624,7 @@ class HybridRetriever:
                 }
             )
             diagnostics["latency_ms"] = self._elapsed_ms(search_started_at)
+            self._notify_stage(on_stage, "rerank")
             return HybridResult(evidence=fusion_ranked, trace=trace, diagnostics=diagnostics)
 
         stage_started_at = perf_counter()
@@ -640,6 +658,7 @@ class HybridRetriever:
                     }
                 )
                 diagnostics["latency_ms"] = self._elapsed_ms(search_started_at)
+                self._notify_stage(on_stage, "rerank")
                 return HybridResult(evidence=reranked, trace=trace, diagnostics=diagnostics)
         except Exception as exc:
             logger.warning(f"Rerank failed, falling back to local rerank: {exc}")
@@ -674,6 +693,7 @@ class HybridRetriever:
                 }
             )
             diagnostics["latency_ms"] = self._elapsed_ms(search_started_at)
+            self._notify_stage(on_stage, "rerank")
             return HybridResult(evidence=fallback, trace=trace, rerank_failed=False, diagnostics=diagnostics)
 
         fallback = merged[:top_k]

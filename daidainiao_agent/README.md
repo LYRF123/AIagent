@@ -30,6 +30,17 @@
 - FastAPI + Uvicorn：默认后端服务（原生 http.server 通过 --legacy 可用）
 - 原生 HTML/CSS/JavaScript：前端工作台
 
+## Git 分支约定
+
+仓库根目录为 `F:/codex/AIagent`（本项目位于其子目录 `daidainiao_agent/`）。
+
+| 分支 | 用途 |
+|------|------|
+| `develop` | 日常开发与功能迭代 |
+| `master` | 稳定发布；从 `develop` 合并后再 push |
+
+查看当前分支：`git branch`（带 `*` 的为当前分支）。切换：`git checkout develop` 或 `git checkout master`。
+
 ## 安装依赖
 
 建议使用 Python 3.11 或更高版本。
@@ -240,10 +251,40 @@ daidainiao_agent/
 4. 替换或追加 `data/demo_papers.json` 后，即可在 CLI 和 Web UI 中检索新语料。
 5. 也可以直接在 Web 工作台中上传 PDF、DOCX 或 TXT，导入后会自动加入知识库。
 
+## RAG Lab 指标说明
+
+工作台 **Lab** 使用内置 `data/demo_eval.json` 对检索配置做离线对比（无需上传评测集）。
+
+| 指标 | 含义 |
+|------|------|
+| **hit@k** | 评测 case 的期望论文 ID 是否出现在 Top-K 检索结果中 |
+| **MRR** | 首个命中位次的倒数均值（越接近 1 越好） |
+| **关键词** | 期望关键词是否出现在召回片段文本中 |
+| **失败案例** | 未命中或关键词缺失的 `(case_id, config_id)`，并展示原问题摘要 |
+
+**一键 Baseline**：单配置 `baseline` + 默认重排，用于快速冒烟。  
+**Fusion vs 重排**：对比 `use_rerank: false`（仅融合）与 `true`（DashScope 重排，无 Key 时可能跳过）。
+
 ## 测试
+
+```powershell
+python -m pytest -q -m "not slow"
+```
+
+全量（含真实混合检索，较慢）：
 
 ```powershell
 python -m pytest -q
 ```
 
 如果测试阶段提示缺少 `langchain_community`、`faiss-cpu` 等包，请先确认已经在 Python 3.11 环境里完成依赖安装。
+
+## 可选 API Token
+
+公网部署时可设置：
+
+```powershell
+$env:DAIDAINIAO_API_TOKEN = 'your-secret'
+```
+
+客户端请求需带 `Authorization: Bearer your-secret`。未设置时本地开发不受影响。

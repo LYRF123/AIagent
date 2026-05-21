@@ -24,6 +24,16 @@ import {
   getStoredSessionSidebarState, closeSessionSidebarOnSmallScreen,
 } from "./handlers/sidebar.js";
 import { confirmAction } from "./confirm.js";
+import { setSessionSearchQuery } from "./render/sessions.js";
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "dark" || theme === "light") {
+    root.setAttribute("data-theme", theme);
+  } else {
+    root.removeAttribute("data-theme");
+  }
+}
 
 if (chatForm) {
   chatForm.setAttribute("action", "javascript:void(0)");
@@ -340,7 +350,34 @@ function ensureSettingsPanel() {
                   <small>本地 BGE 模型，更准但更慢</small>
                 </span>
               </label>
+              <label class="settings-toggle">
+                <input id="settings-self-correct" type="checkbox" />
+                <span class="settings-toggle-ui" aria-hidden="true"></span>
+                <span class="settings-toggle-text">
+                  <strong>自纠错检索</strong>
+                  <small>多轮检索与 CRAG，更慢</small>
+                </span>
+              </label>
+              <label class="settings-toggle">
+                <input id="settings-auto-sync-evidence" type="checkbox" />
+                <span class="settings-toggle-ui" aria-hidden="true"></span>
+                <span class="settings-toggle-text">
+                  <strong>回答后同步工作台证据</strong>
+                  <small>自动刷新证据 Tab</small>
+                </span>
+              </label>
             </div>
+          </section>
+          <section class="settings-block">
+            <h3 class="settings-block-title">外观</h3>
+            <label class="settings-stack">
+              <span class="settings-label">主题</span>
+              <select id="settings-theme" class="settings-input settings-select">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
           </section>
           <section class="settings-block settings-block-muted">
             <div class="settings-subhead">
@@ -486,6 +523,9 @@ function ensureSettingsPanel() {
     const topK = Number(panel.querySelector("#settings-top-k").value);
     const strictGrounded = panel.querySelector("#settings-strict-grounded").checked;
     const useRerank = panel.querySelector("#settings-use-rerank").checked;
+    const selfCorrect = panel.querySelector("#settings-self-correct").checked;
+    const autoSyncEvidence = panel.querySelector("#settings-auto-sync-evidence").checked;
+    const theme = panel.querySelector("#settings-theme").value;
     const profileName = panel.querySelector("#settings-profile-name")?.value.trim() || "";
     const provider = panel.querySelector("#settings-provider").value;
     const apiKey = panel.querySelector("#settings-api-key").value.trim();
@@ -518,6 +558,9 @@ function ensureSettingsPanel() {
       topK,
       strictGrounded,
       useRerank,
+      selfCorrect,
+      autoSyncEvidence,
+      theme,
       modelProvider: provider,
       modelApiKey: apiKey || appSettings.modelApiKey,
       modelBaseUrl: baseUrl,
@@ -562,6 +605,7 @@ function ensureSettingsPanel() {
       showToast(`已应用：${appSettings.topK} 个证据片段`, "success");
     }
 
+    applyTheme(appSettings.theme);
     closeSettingsPanel();
   });
   panel.querySelector("#settings-refresh-docs").addEventListener("click", refreshDocumentList);
@@ -589,6 +633,9 @@ async function openSettingsPanel() {
   panel.querySelector("#settings-top-k").value = String(appSettings.topK);
   panel.querySelector("#settings-strict-grounded").checked = appSettings.strictGrounded;
   panel.querySelector("#settings-use-rerank").checked = appSettings.useRerank;
+  panel.querySelector("#settings-self-correct").checked = appSettings.selfCorrect !== false;
+  panel.querySelector("#settings-auto-sync-evidence").checked = appSettings.autoSyncEvidence !== false;
+  panel.querySelector("#settings-theme").value = appSettings.theme || "system";
   panel.querySelector("#settings-provider").value = appSettings.modelProvider || "dashscope";
   panel.querySelector("#settings-api-key").value = appSettings.modelApiKey || "";
   panel.querySelector("#settings-base-url").value = appSettings.modelBaseUrl || "";
@@ -684,6 +731,7 @@ async function submitQuestion(event, questionOverride) {
     session_id: getCurrentSessionId() || undefined,
     strict_grounded: appSettings.strictGrounded,
     use_rerank: appSettings.useRerank,
+    self_correct: appSettings.selfCorrect !== false,
   };
 
   try {
@@ -966,9 +1014,17 @@ if (draft) {
   chatInput.value = draft;
 }
 toggleWelcomeScreen(true);
+applyTheme(appSettings.theme || "system");
 refreshSessions();
 renderLatestEvidence();
 refreshWorkspaceStatus();
+
+const sessionSearchInput = document.getElementById("session-search");
+if (sessionSearchInput) {
+  sessionSearchInput.addEventListener("input", () => {
+    setSessionSearchQuery(sessionSearchInput.value);
+  });
+}
 
 // 注册消息编辑和重试的回调
 bindUserMessageActions(async (text, userMsgIndex, isEdit) => {

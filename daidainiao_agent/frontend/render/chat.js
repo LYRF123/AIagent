@@ -123,13 +123,62 @@ export function appendStreamDelta(el, delta) {
   answerEl.classList.add("streaming-cursor");
 }
 
+function buildExportActionsHtml() {
+  return `
+    <div class="answer-export-actions">
+      <button type="button" class="ghost-button compact-button answer-export-copy" data-action="copy-markdown">复制 Markdown</button>
+      <button type="button" class="ghost-button compact-button answer-export-download" data-action="download-markdown">下载 .md</button>
+    </div>
+  `;
+}
+
+export function bindAnswerExportActions(el, data) {
+  const copyBtn = el.querySelector(".answer-export-copy");
+  const downloadBtn = el.querySelector(".answer-export-download");
+  if (!copyBtn || !downloadBtn) return;
+
+  const runExport = async () => {
+    const { exportMarkdown } = await import("../api.js");
+    return exportMarkdown(data);
+  };
+
+  copyBtn.addEventListener("click", async () => {
+    try {
+      const result = await runExport();
+      await navigator.clipboard.writeText(result.markdown || "");
+      copyBtn.textContent = "已复制";
+      setTimeout(() => {
+        copyBtn.textContent = "复制 Markdown";
+      }, 1600);
+    } catch (error) {
+      copyBtn.textContent = "复制失败";
+    }
+  });
+
+  downloadBtn.addEventListener("click", async () => {
+    try {
+      const result = await runExport();
+      const blob = new Blob([result.markdown || ""], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = result.filename || "answer.md";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      downloadBtn.textContent = "下载失败";
+    }
+  });
+}
+
 export function renderFinalAnswer(el, data) {
   const answerEl = el.querySelector(".chat-answer") || el;
   const evidenceCount = data.evidence ? data.evidence.length : 0;
-  answerEl.innerHTML = renderSimpleMarkdown(data.answer, evidenceCount, data.evidence || []);
+  answerEl.innerHTML = renderSimpleMarkdown(data.answer, evidenceCount, data.evidence || []) + buildExportActionsHtml();
   answerEl.classList.remove("streaming-cursor");
   renderRetrievalDiagnostics(el, data.diagnostics);
   bindCitationClicks(el);
+  bindAnswerExportActions(el, data);
 }
 
 function formatStageName(value) {

@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from daidainiao_agent.models import AnswerResult, ConversationMessage, Evidence
 from daidainiao_agent.server_utils import import_saved_document
 
@@ -16,7 +18,7 @@ def test_answer_without_evidence_is_blocked_by_default(daidainiao_agent, monkeyp
     monkeypatch.setattr(
         daidainiao_agent,
         "_retrieve_evidence",
-        lambda question, top_k, trace, use_rerank=True: [],
+        lambda question, top_k, trace, use_rerank=True, step_sink=None: [],
     )
 
     def unexpected_call(question: str, trace: list) -> AnswerResult:
@@ -39,7 +41,7 @@ def test_answer_without_evidence_can_fallback_when_opted_out(daidainiao_agent, m
     monkeypatch.setattr(
         daidainiao_agent,
         "_retrieve_evidence",
-        lambda question, top_k, trace, use_rerank=True: [],
+        lambda question, top_k, trace, use_rerank=True, step_sink=None: [],
     )
     monkeypatch.setattr(
         daidainiao_agent,
@@ -107,7 +109,7 @@ def test_delete_document_only_removes_managed_upload_file(daidainiao_agent, tmp_
 def test_follow_up_question_uses_session_history_in_retrieval(daidainiao_agent, monkeypatch) -> None:
     captured: dict[str, str] = {}
 
-    def fake_retrieve(query: str, top_k: int, trace: list, use_rerank: bool = True) -> list:
+    def fake_retrieve(query: str, top_k: int, trace: list, use_rerank: bool = True, step_sink=None) -> list:
         captured["query"] = query
         return []
 
@@ -130,7 +132,7 @@ def test_answer_question_stream_emits_chunks_and_final(daidainiao_agent, monkeyp
     monkeypatch.setattr(
         daidainiao_agent,
         "_retrieve_evidence",
-        lambda query, top_k, trace, use_rerank=True: [
+        lambda query, top_k, trace, use_rerank=True, step_sink=None: [
             Evidence(
                 paper_id="react",
                 title="ReAct",
@@ -153,6 +155,7 @@ def test_answer_question_stream_emits_chunks_and_final(daidainiao_agent, monkeyp
     assert "ReAct" in events[-1]["data"]["answer"]
 
 
+@pytest.mark.slow
 def test_answer_question_stream_includes_retrieval_diagnostics(daidainiao_agent) -> None:
     events = list(
         daidainiao_agent.answer_question_stream(
@@ -171,7 +174,7 @@ def test_rule_based_answer_matches_chinese_question_language(daidainiao_agent, m
     monkeypatch.setattr(
         daidainiao_agent,
         "_retrieve_evidence",
-        lambda query, top_k, trace, use_rerank=True: [
+        lambda query, top_k, trace, use_rerank=True, step_sink=None: [
             Evidence(
                 paper_id="react",
                 title="ReAct",

@@ -1,5 +1,7 @@
 import json
 import threading
+
+import pytest
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
@@ -53,6 +55,7 @@ def test_rag_lab_configs_accept_frontend_shape_and_rerank_alias() -> None:
     assert [config.use_rerank for config in configs] == [True, False]
 
 
+@pytest.mark.slow
 def test_rag_lab_evaluation_compares_rerank_modes(daidainiao_agent, monkeypatch) -> None:
     calls = []
 

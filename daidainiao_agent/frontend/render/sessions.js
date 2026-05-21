@@ -1,20 +1,82 @@
 import { sessionsOutput, getCurrentSessionId } from "../state.js";
 import { escapeHtml, formatTimestamp } from "./escape.js";
 
-export function renderSessions(items) {
-  if (!items || items.length === 0) {
-    sessionsOutput.innerHTML = `<p class="empty-note">\u8FD8\u6CA1\u6709\u4F1A\u8BDD\u3002</p>`;
-    return;
-  }
+let _allSessions = [];
+let _searchQuery = "";
 
-  sessionsOutput.innerHTML = items.map((item) => `
+function isToday(isoValue) {
+  if (!isoValue) return false;
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
+}
+
+function filterSessions(items, query) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return items;
+  return items.filter((item) => {
+    const haystack = `${item.title || ""} ${item.preview || ""}`.toLowerCase();
+    return haystack.includes(normalized);
+  });
+}
+
+function renderSessionCard(item) {
+  return `
     <div class="session-card ${item.session_id === getCurrentSessionId() ? "active" : ""}">
       <button class="session-open" data-session-id="${escapeHtml(item.session_id)}" type="button">
-        <strong>${escapeHtml(item.title || "\u65B0\u4F1A\u8BDD")}</strong>
-        <p class="block-note">${escapeHtml(item.preview || "\u8FD8\u6CA1\u6709\u5386\u53F2\u6D88\u606F\u3002")}</p>
-        <p class="session-meta">${escapeHtml(`${item.turn_count || 0} \u8F6E \u00B7 ${formatTimestamp(item.updated_at || "")}`)}</p>
+        <strong>${escapeHtml(item.title || "新会话")}</strong>
+        <p class="block-note">${escapeHtml(item.preview || "还没有历史消息。")}</p>
+        <p class="session-meta">${escapeHtml(`${item.turn_count || 0} 轮 · ${formatTimestamp(item.updated_at || "")}`)}</p>
       </button>
-      <button class="delete-session" data-session-id="${escapeHtml(item.session_id)}" type="button" aria-label="\u5220\u9664\u4F1A\u8BDD" title="\u5220\u9664\u4F1A\u8BDD">&times;</button>
+      <button class="delete-session" data-session-id="${escapeHtml(item.session_id)}" type="button" aria-label="删除会话" title="删除会话">&times;</button>
     </div>
-  `).join("");
+  `;
+}
+
+function renderSessionGroup(title, items) {
+  if (!items.length) return "";
+  return `
+    <div class="session-group">
+      <p class="session-group-title">${escapeHtml(title)}</p>
+      ${items.map((item) => renderSessionCard(item)).join("")}
+    </div>
+  `;
+}
+
+export function setSessionSearchQuery(query) {
+  _searchQuery = query || "";
+  renderSessionsFiltered();
+}
+
+export function setSessionItems(items) {
+  _allSessions = Array.isArray(items) ? items : [];
+  renderSessionsFiltered();
+}
+
+export function renderSessions(items) {
+  setSessionItems(items);
+}
+
+function renderSessionsFiltered() {
+  const filtered = filterSessions(_allSessions, _searchQuery);
+  if (!_allSessions.length) {
+    sessionsOutput.innerHTML = `<p class="empty-note">还没有会话。</p>`;
+    return;
+  }
+  if (!filtered.length) {
+    sessionsOutput.innerHTML = `<p class="empty-note">没有匹配的会话。</p>`;
+    return;
+  }
+  const todayItems = filtered.filter((item) => isToday(item.updated_at));
+  const earlierItems = filtered.filter((item) => !isToday(item.updated_at));
+  const groups = [
+    renderSessionGroup("今天", todayItems),
+    renderSessionGroup("更早", earlierItems),
+  ].filter(Boolean);
+  sessionsOutput.innerHTML = groups.join("");
 }
