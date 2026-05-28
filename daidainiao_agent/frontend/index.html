@@ -11,11 +11,23 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;600;700&display=swap" rel="stylesheet" />
     <link rel="icon" type="image/png" href="/static/icons/dodo-official.png" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260521" />
-    <link rel="stylesheet" href="/static/ui-v2.css?v=20260521" />
+    <link rel="stylesheet" href="/static/tokens.css?v=20260541-density-fix" />
+    <link rel="stylesheet" href="/static/base.css?v=20260541-density-fix" />
+    <link rel="stylesheet" href="/static/components.css?v=20260541-density-fix" />
+    <link rel="stylesheet" href="/static/layout.css?v=20260541-density-fix" />
+    <link rel="stylesheet" href="/static/content.css?v=20260541-density-fix" />
   </head>
   <body>
+    <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+      <symbol id="icon-plus" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+      <symbol id="icon-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M10.5 10.5L13 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+      <symbol id="icon-doc" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4V2z" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M9 2v3h3" stroke="currentColor" stroke-width="1.2" fill="none"/></symbol>
+      <symbol id="icon-grid" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" fill="none"/></symbol>
+      <symbol id="icon-settings" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.05 3.05l1.41 1.41M11.54 11.54l1.41 1.41M3.05 12.95l1.41-1.41M11.54 4.46l1.41-1.41" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+      <symbol id="icon-workbench" viewBox="0 0 16 16"><path d="M2 4h12v8H2z" stroke="currentColor" stroke-width="1.2" fill="none"/><path d="M5 8h6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    </svg>
     <div class="app-shell">
+      <div id="sidebar-scrim" class="sidebar-scrim" hidden aria-hidden="true"></div>
       <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="切换侧栏">
         <span class="toggle-icon"></span>
       </button>
@@ -26,49 +38,54 @@
             <span class="brand-mark" aria-hidden="true">
               <img src="/static/icons/dodo-official.png" width="32" height="32" alt="" />
             </span>
-            <h2 class="sidebar-brand">呆呆鸟助手</h2>
+            <div class="brand-text">
+              <h2 class="sidebar-brand">呆呆鸟</h2>
+              <p class="brand-tagline">论文与证据助手</p>
+            </div>
           </div>
         </div>
 
         <nav class="sidebar-nav" aria-label="对话导航">
           <button id="new-chat" class="nav-button nav-button-primary" type="button">
-            <span aria-hidden="true">+</span>
+            <span class="nav-icon" aria-hidden="true"><svg><use href="#icon-plus"/></svg></span>
             新建对话
           </button>
 
           <div class="sidebar-section">
-            <button class="nav-button nav-button-static" type="button" aria-expanded="true">
-              <span aria-hidden="true">⌕</span>
-              历史对话
-            </button>
-            <label class="session-search-label">
-              <span class="visually-hidden">搜索会话</span>
-              <input id="session-search" class="session-search-input" type="search" placeholder="搜索会话…" autocomplete="off" />
-            </label>
+            <p class="sidebar-section-label">历史对话</p>
+            <div class="session-search-wrap">
+              <svg class="session-search-icon" aria-hidden="true"><use href="#icon-search"/></svg>
+              <label class="session-search-label">
+                <span class="visually-hidden">搜索会话</span>
+                <input id="session-search" class="session-search-input" type="search" placeholder="搜索会话…" autocomplete="off" />
+              </label>
+            </div>
             <div class="sidebar-history" id="sessions-output">
               <p class="empty-note">还没有会话。</p>
             </div>
           </div>
 
           <button id="upload-doc-button" class="nav-button" type="button">
-            <span aria-hidden="true">📄</span>
+            <span class="nav-icon" aria-hidden="true"><svg><use href="#icon-doc"/></svg></span>
             导入文档
           </button>
           <input id="upload-file-input" type="file" accept=".pdf,.docx,.txt" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;" />
 
-          <button id="workspace-toggle" class="nav-button nav-button-muted" type="button">
-            <span aria-hidden="true">▦</span>
-            工作台
-          </button>
+          <div class="sidebar-tools-group">
+            <button id="workspace-toggle" class="nav-button nav-button-muted" type="button">
+              <span class="nav-icon" aria-hidden="true"><svg><use href="#icon-workbench"/></svg></span>
+              工作台
+            </button>
 
-          <button id="settings-button" class="nav-button" type="button">
-            <span aria-hidden="true">⚙</span>
-            设置
-          </button>
+            <button id="settings-button" class="nav-button" type="button">
+              <span class="nav-icon" aria-hidden="true"><svg><use href="#icon-settings"/></svg></span>
+              设置
+            </button>
+          </div>
         </nav>
 
         <div class="sidebar-footer">
-          <button id="clear-chat" class="danger-button" type="button">清空对话</button>
+          <button id="clear-chat" class="danger-link" type="button">清空当前对话</button>
         </div>
       </aside>
 
@@ -77,9 +94,15 @@
           <header class="chat-panel-header">
             <div>
               <h1 id="assistant-title">呆呆鸟</h1>
-              <p class="panel-kicker">基于本地论文与证据的问答</p>
+              <p class="header-subtitle">基于本地论文语料与引用约束的研究问答</p>
             </div>
-            <button id="workspace-open-header" class="status-pill status-button status-button-subtle" type="button" title="打开产品工作台">工作台</button>
+            <div class="header-actions">
+              <div class="quality-preset-toggle" role="group" aria-label="检索模式">
+                <button type="button" class="quality-preset-btn" data-preset="fast" title="更快：跳过重排与自纠错" aria-pressed="false">快</button>
+                <button type="button" class="quality-preset-btn active" data-preset="accurate" title="更准：重排 + 自纠错" aria-pressed="true">准</button>
+              </div>
+              <button type="button" id="header-status-capsule" class="status-capsule" title="点击查看运行状态">本地规则 · Top 5</button>
+            </div>
           </header>
 
           <div id="chat-stream-status" class="chat-stream-status" aria-live="polite" aria-atomic="true"></div>
@@ -87,10 +110,16 @@
             <div id="welcome-screen" class="welcome-screen">
               <div class="welcome-copy">
                 <div class="welcome-mascot" aria-hidden="true">
-                  <img src="/static/icons/dodo-official.png" width="128" height="128" alt="呆呆鸟" />
+                  <img src="/static/icons/dodo-official.png" width="72" height="72" alt="呆呆鸟" />
                 </div>
                 <h2>你好，我是呆呆鸟</h2>
-                <p class="welcome-hint">我是你的呆呆鸟助手，认真办案</p>
+                <p class="welcome-hint">导入论文，本地检索，回答附带引用证据</p>
+                <button type="button" id="load-demo-session" class="ghost-button welcome-demo-btn">查看示例对话</button>
+                <div class="welcome-prompts" id="welcome-prompts">
+                  <button type="button" class="welcome-prompt" data-prompt="ReAct 是如何结合推理与工具调用的？">ReAct 与工具调用</button>
+                  <button type="button" class="welcome-prompt" data-prompt="Self-RAG 的自我反思检索机制是什么？">Self-RAG 机制</button>
+                  <button type="button" class="welcome-prompt" data-prompt="有哪些关于 RAG 评测的代表工作？">RAG 评测综述</button>
+                </div>
               </div>
             </div>
           </div>
@@ -108,26 +137,28 @@
           </div>
         </section>
 
-        <aside id="workspace-panel" class="workspace-panel" aria-label="产品工作台">
+        <div id="workspace-scrim" class="workspace-scrim" hidden aria-hidden="true"></div>
+
+        <aside id="workspace-panel" class="workspace-panel" aria-label="产品工作台" inert aria-hidden="true">
           <div class="workspace-head">
             <div>
-              <p class="panel-kicker">Workbench</p>
-              <h2>产品工作台</h2>
+              <p class="panel-kicker">深度工具</p>
+              <h2>工作台</h2>
             </div>
             <button id="workspace-close" class="settings-close" type="button" aria-label="关闭工作台">×</button>
           </div>
 
           <div class="workspace-tabs" role="tablist" aria-label="产品能力">
-            <button class="workspace-tab active" type="button" data-workspace-tab="evidence">证据</button>
-            <button class="workspace-tab" type="button" data-workspace-tab="documents">知识库</button>
-            <button class="workspace-tab" type="button" data-workspace-tab="lab">RAG Lab</button>
-            <button class="workspace-tab" type="button" data-workspace-tab="reading">阅读</button>
-            <button class="workspace-tab" type="button" data-workspace-tab="review">综述</button>
-            <button class="workspace-tab" type="button" data-workspace-tab="status">状态</button>
+            <button class="workspace-tab active" type="button" role="tab" id="workspace-tab-evidence" data-workspace-tab="evidence" aria-selected="true" aria-controls="workspace-view-evidence" tabindex="0">证据</button>
+            <button class="workspace-tab" type="button" role="tab" id="workspace-tab-documents" data-workspace-tab="documents" aria-selected="false" aria-controls="workspace-view-documents" tabindex="-1">知识库</button>
+            <button class="workspace-tab" type="button" role="tab" id="workspace-tab-lab" data-workspace-tab="lab" aria-selected="false" aria-controls="workspace-view-lab" tabindex="-1">RAG Lab</button>
+            <button class="workspace-tab" type="button" role="tab" id="workspace-tab-reading" data-workspace-tab="reading" aria-selected="false" aria-controls="workspace-view-reading" tabindex="-1">阅读</button>
+            <button class="workspace-tab" type="button" role="tab" id="workspace-tab-review" data-workspace-tab="review" aria-selected="false" aria-controls="workspace-view-review" tabindex="-1">综述</button>
+            <button class="workspace-tab" type="button" role="tab" id="workspace-tab-status" data-workspace-tab="status" aria-selected="false" aria-controls="workspace-view-status" tabindex="-1">状态</button>
           </div>
 
           <div class="workspace-body">
-            <section class="workspace-view active" data-workspace-view="evidence">
+            <section class="workspace-view active" id="workspace-view-evidence" role="tabpanel" data-workspace-view="evidence" aria-labelledby="workspace-tab-evidence" tabindex="0">
               <div class="workspace-section-head">
                 <h3>证据体验</h3>
                 <button id="workspace-load-evidence" class="ghost-button compact-button" type="button">读取最新回答</button>
@@ -137,11 +168,11 @@
               </div>
             </section>
 
-            <section class="workspace-view" data-workspace-view="documents">
+            <section class="workspace-view" id="workspace-view-documents" role="tabpanel" data-workspace-view="documents" aria-labelledby="workspace-tab-documents" tabindex="-1" hidden>
               <div class="workspace-section-head">
                 <h3>知识库管理</h3>
-                <div style="display:flex;gap:6px;">
-                  <button id="workspace-delete-all-documents" class="ghost-button compact-button" type="button" style="color:var(--danger,#e05252);">全部删除</button>
+                <div class="button-row">
+                  <button id="workspace-delete-all-documents" class="ghost-button compact-button danger-text" type="button">全部删除</button>
                   <button id="workspace-refresh-documents" class="ghost-button compact-button" type="button">刷新</button>
                 </div>
               </div>
@@ -150,12 +181,31 @@
               </div>
             </section>
 
-            <section class="workspace-view" data-workspace-view="lab">
+            <section class="workspace-view" id="workspace-view-lab" role="tabpanel" data-workspace-view="lab" aria-labelledby="workspace-tab-lab" tabindex="-1" hidden>
               <div class="workspace-section-head">
                 <h3>RAG Lab</h3>
                 <button id="workspace-run-lab-baseline" class="ghost-button compact-button" type="button">一键 Baseline</button>
                 <button id="workspace-run-lab" class="primary-button compact-button" type="button">Fusion vs 重排</button>
               </div>
+              <div class="lab-guide">
+                <p class="lab-guide-step"><span>1</span> 一键 Baseline 跑内置 demo_eval</p>
+                <p class="lab-guide-step"><span>2</span> 查看 hit@k 与失败案例</p>
+                <p class="lab-guide-step"><span>3</span> 点「在对话中复现」验证单条 query</p>
+              </div>
+              <details class="lab-eval-wizard">
+                <summary>自定义 Eval 向导</summary>
+                <div class="lab-eval-wizard-body">
+                  <p class="block-note">每行一条：<code>问题 | 期望 paper_id | 关键词1,关键词2</code></p>
+                  <textarea id="workspace-eval-wizard-input" rows="4" placeholder="ReAct 如何结合推理与工具？ | react | reasoning,tool"></textarea>
+                  <div class="workspace-actions-row">
+                    <button id="workspace-eval-wizard-run" type="button" class="ghost-button compact-button">运行向导 Eval</button>
+                    <label class="ghost-button compact-button lab-upload-label">
+                      上传 JSON
+                      <input id="workspace-lab-eval-file" type="file" accept=".json,application/json" hidden />
+                    </label>
+                  </div>
+                </div>
+              </details>
               <div class="workspace-form-row">
                 <label>Top K <input id="workspace-lab-top-k" type="number" min="1" max="8" value="5" /></label>
                 <label>候选数 <input id="workspace-lab-candidate-k" type="number" min="4" max="60" value="20" /></label>
@@ -165,7 +215,7 @@
               </div>
             </section>
 
-            <section class="workspace-view" data-workspace-view="reading">
+            <section class="workspace-view" id="workspace-view-reading" role="tabpanel" data-workspace-view="reading" aria-labelledby="workspace-tab-reading" tabindex="-1" hidden>
               <div class="workspace-section-head">
                 <h3>论文阅读</h3>
                 <button id="workspace-run-reading" class="primary-button compact-button" type="button">生成简报</button>
@@ -179,7 +229,7 @@
               </div>
             </section>
 
-            <section class="workspace-view" data-workspace-view="review">
+            <section class="workspace-view" id="workspace-view-review" role="tabpanel" data-workspace-view="review" aria-labelledby="workspace-tab-review" tabindex="-1" hidden>
               <div class="workspace-section-head">
                 <h3>深度综述</h3>
                 <button id="workspace-run-review" class="primary-button compact-button" type="button">生成</button>
@@ -193,7 +243,7 @@
               </div>
             </section>
 
-            <section class="workspace-view" data-workspace-view="status">
+            <section class="workspace-view" id="workspace-view-status" role="tabpanel" data-workspace-view="status" aria-labelledby="workspace-tab-status" tabindex="-1" hidden>
               <div class="workspace-section-head">
                 <h3>运行状态</h3>
                 <button id="workspace-refresh-status" class="ghost-button compact-button" type="button">刷新</button>
@@ -259,6 +309,7 @@
           </section>
           <section class="settings-block">
             <h3 class="settings-block-title">检索偏好</h3>
+            <p class="settings-block-note">与顶栏「快 / 准」联动；此处可微调 Top K 等高级项。</p>
             <div class="settings-retrieval-grid">
               <label class="settings-stack settings-stack-inline">
                 <span class="settings-label">证据片段数</span>
@@ -280,148 +331,85 @@
                   <small>本地 BGE 模型，更准但更慢</small>
                 </span>
               </label>
+              <label class="settings-toggle">
+                <input id="settings-self-correct" type="checkbox" checked />
+                <span class="settings-toggle-ui" aria-hidden="true"></span>
+                <span class="settings-toggle-text">
+                  <strong>自纠错检索</strong>
+                  <small>多轮检索与 CRAG，更慢</small>
+                </span>
+              </label>
+              <label class="settings-toggle">
+                <input id="settings-auto-sync-evidence" type="checkbox" checked />
+                <span class="settings-toggle-ui" aria-hidden="true"></span>
+                <span class="settings-toggle-text">
+                  <strong>回答后同步工作台证据</strong>
+                  <small>自动刷新证据 Tab</small>
+                </span>
+              </label>
             </div>
           </section>
-          <section class="settings-block settings-block-muted">
-            <div class="settings-subhead">
-              <h4>已导入文档</h4>
-              <span>知识库来源</span>
-            </div>
-            <div id="settings-documents" class="settings-documents">
-              <p class="settings-empty">点击刷新文档查看列表。</p>
-            </div>
+          <section class="settings-block">
+            <h3 class="settings-block-title">外观</h3>
+            <label class="settings-stack">
+              <span class="settings-label">主题</span>
+              <select id="settings-theme" class="settings-input settings-select">
+                <option value="system">跟随系统</option>
+                <option value="light">浅色</option>
+                <option value="dark">深色</option>
+              </select>
+            </label>
           </section>
         </div>
         <div class="settings-footer settings-actions">
           <button id="settings-save" class="primary-button compact-button" type="button">保存并应用</button>
-          <button id="settings-refresh-docs" class="ghost-button compact-button" type="button">刷新文档</button>
+          <button id="settings-manage-knowledge" class="ghost-button compact-button" type="button">管理知识库 →</button>
           <p class="settings-footer-hint">已切换的配置可直接保存；新建或另存为时需填写配置名称</p>
         </div>
       </div>
     </div>
 
     <script>
-      (() => {
-        const button = document.getElementById("settings-button");
-        const panel = document.getElementById("settings-panel");
-        const close = document.getElementById("settings-close");
-        if (!button || !panel) return;
-        let closeTimer = null;
-        const closeWithAnimation = () => {
-          if (panel.hidden || panel.classList.contains("settings-panel-closing")) return;
-          panel.classList.add("settings-panel-closing");
-          clearTimeout(closeTimer);
-          closeTimer = setTimeout(() => {
-            panel.hidden = true;
-            panel.classList.remove("settings-panel-closing");
-          }, 260);
-        };
-        button.addEventListener("click", () => {
-          clearTimeout(closeTimer);
-          panel.classList.remove("settings-panel-closing");
-          panel.hidden = false;
-        });
-        close?.addEventListener("click", closeWithAnimation);
-        panel.addEventListener("click", (event) => {
-          if (event.target === panel) closeWithAnimation();
-        });
-      })();
-    </script>
-    <script>
-      (() => {
-        const form = document.getElementById("chat-form");
-        const input = document.getElementById("chat-input");
-        const submit = document.getElementById("chat-submit");
-        const messages = document.getElementById("chat-messages");
-        const welcome = document.getElementById("welcome-screen");
-        if (!form || !input || !submit || !messages) return;
-
-        const escapeHtml = (value) => String(value)
-          .replaceAll("&", "&amp;")
-          .replaceAll("<", "&lt;")
-          .replaceAll(">", "&gt;")
-          .replaceAll('"', "&quot;")
-          .replaceAll("'", "&#39;");
-
-        const appendMessage = (role, text) => {
-          if (welcome) welcome.style.display = "none";
-          const cls = role === "user" ? "chat-msg-user" : "chat-msg-assistant";
-          messages.insertAdjacentHTML("beforeend", `<div class="chat-msg ${cls}"><p>${escapeHtml(text)}</p></div>`);
-          messages.scrollTop = messages.scrollHeight;
-          return messages.lastElementChild;
-        };
-
-        async function fallbackSend(event) {
-          if (window.__DODO_CHAT_READY || event.defaultPrevented) return;
-          event.preventDefault();
-          const question = input.value.trim();
-          if (!question || submit.disabled) return;
-          submit.disabled = true;
-          input.value = "";
-          appendMessage("user", question);
-          const assistant = appendMessage("assistant", "正在连接...");
-          const paragraph = assistant.querySelector("p");
-          let answer = "";
-          try {
-            let settings = {};
-            try {
-              settings = JSON.parse(localStorage.getItem("daidainiao-agent-settings") || "{}");
-            } catch {
-              settings = {};
-            }
-            const response = await fetch("/ask-stream", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                question,
-                top_k: Number(settings.topK) || 5,
-                strict_grounded: settings.strictGrounded !== false,
-                use_rerank: settings.useRerank !== false,
-              }),
-            });
-            if (!response.ok || !response.body) throw new Error(`请求失败：${response.status}`);
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder("utf-8");
-            let buffer = "";
-            const handleBlock = (block) => {
-              const eventType = (block.match(/^event:\s*(.+)$/m) || [])[1]?.trim() || "message";
-              const data = block.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
-              if (!data) return;
-              const parsed = JSON.parse(data);
-              if (eventType === "chunk") {
-                answer += parsed.delta || "";
-                paragraph.innerHTML = escapeHtml(answer || "...");
-                messages.scrollTop = messages.scrollHeight;
-              } else if (eventType === "final") {
-                paragraph.innerHTML = escapeHtml(parsed.answer || answer || "完成");
-              } else if (eventType === "error") {
-                throw new Error(parsed.error || "流式输出失败");
-              }
-            };
-            while (true) {
-              const { value, done } = await reader.read();
-              buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-              let boundary = buffer.indexOf("\n\n");
-              while (boundary !== -1) {
-                handleBlock(buffer.slice(0, boundary));
-                buffer = buffer.slice(boundary + 2);
-                boundary = buffer.indexOf("\n\n");
-              }
-              if (done) break;
-            }
-          } catch (err) {
-            paragraph.textContent = `错误：${err.message || "发送失败"}`;
-            paragraph.style.color = "var(--danger)";
-          } finally {
-            submit.disabled = false;
-            input.focus();
-          }
+      (function () {
+        function showBootError(message) {
+          if (window.__DODO_UI_BOUND || document.getElementById("boot-error-bar")) return;
+          const bar = document.createElement("div");
+          bar.id = "boot-error-bar";
+          bar.className = "app-boot-error";
+          bar.textContent = message;
+          document.body.appendChild(bar);
         }
 
-        form.addEventListener("submit", fallbackSend);
-        submit.addEventListener("click", fallbackSend);
+        if (window.location.protocol === "file:") {
+          window.addEventListener("DOMContentLoaded", () => {
+            showBootError("请通过本地服务访问：先在项目目录运行 python -m daidainiao_agent.cli serve，再打开 http://127.0.0.1:8000");
+          });
+          return;
+        }
+
+        window.addEventListener("error", (event) => {
+          const source = event.filename || "";
+          const fromAppScript = source.includes("/static/") || source.includes(window.location.origin);
+          if (!fromAppScript && !event.error) return;
+          console.error("呆呆鸟脚本错误:", event.error || event.message, source);
+          if (!window.__DODO_UI_BOUND) {
+            const detail = event.message || (event.error && String(event.error));
+            const hint = detail && !/加载失败/.test(detail)
+              ? `${detail} · 请 Ctrl+F5 硬刷新`
+              : "界面脚本加载失败，请确认通过 http://127.0.0.1:8000 访问并 Ctrl+F5 硬刷新。";
+            showBootError(hint);
+          }
+        });
+
+        window.addEventListener("unhandledrejection", (event) => {
+          console.error("呆呆鸟未捕获 Promise:", event.reason);
+          if (!window.__DODO_UI_BOUND) {
+            const detail = event.reason?.message || String(event.reason || "模块初始化失败");
+            showBootError(`${detail} · 请 Ctrl+F5 硬刷新`);
+          }
+        });
       })();
     </script>
-    <script type="module" src="/static/app.js?v=20260521-doc-del"></script>
+    <script type="module" src="/static/app.js?v=20260541-density-fix"></script>
   </body>
 </html>

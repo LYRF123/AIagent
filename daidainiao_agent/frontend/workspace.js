@@ -7,7 +7,7 @@ import {
   runDeepReview,
   getRuntimeStatus,
 } from "./api.js";
-import { getLastFinalPayload } from "./stream.js";
+import { getLastFinalPayload } from "./final-payload.js";
 import {
   escapeHtml,
   truncateText,
@@ -17,6 +17,15 @@ import {
   formatScoreValue,
 } from "./render/escape.js";
 import { confirmAction } from "./confirm.js";
+import {
+  dismissSettingsPanelAnimated,
+  setWorkspaceShellInert,
+  showWorkspaceScrim,
+  focusWorkspaceToggle,
+  bindWorkspaceFocusTrap,
+  removeWorkspaceFocusTrap,
+  focusWorkspaceCloseButton,
+} from "./overlay.js";
 
 let cachedDocuments = [];
 
@@ -37,10 +46,113 @@ function setError(target, error) {
   setOutput(target, `<p class="workspace-error">错误：${escapeHtml(error.message || String(error) || "请求失败")}</p>`);
 }
 
+async function withButtonBusy(buttonId, task) {
+  const button = el(buttonId);
+  if (button?.disabled) return;
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  }
+  try {
+    await task();
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.setAttribute("aria-busy", "false");
+    }
+  }
+}
+
 function formatPercent(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "-";
   return `${Math.round(numeric * 100)}%`;
+}
+
+function formatStageLabel(name) {
+  const labels = {
+    tfidf: "TF-IDF",
+    bm25: "BM25",
+    vector: "向量",
+    fusion: "融合",
+    rerank: "重排",
+    query_expansion: "扩展",
+  };
+  return labels[name] || name || "阶段";
+}
+
+function formatLatency(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "";
+  if (numeric >= 1000) return `${(numeric / 1000).toFixed(1)}s`;
+  return `${Math.round(numeric)}ms`;
+}
+
+export function openWorkspaceTab(tabName) {
+  openWorkspace();
+  activateTab(tabName);
+}
+
+export async function jumpToReadingSource({ paperId, page, highlightText = "" }) {
+  if (!paperId) return;
+  openWorkspaceTab("reading");
+  await refreshWorkspaceDocuments();
+  const select = el("workspace-reading-select");
+  if (select) select.value = paperId;
+  setLoading("workspace-reading-output", "加载来源片段…");
+  try {
+    const detail = await getDocumentDetail(paperId, { passageLimit: 24 });
+    let passages = detail.passages || [];
+    if (page) {
+      const filtered = passages.filter((item) => String(item.page) === String(page));
+      if (filtered.length) passages = filtered;
+    }
+    if (highlightText && passages.length > 1) {
+      const needle = highlightText.slice(0, 48).toLowerCase();
+      const matched = passages.filter((item) => (item.text || "").toLowerCase().includes(needle));
+      if (matched.length) passages = matched;
+    }
+    const highlight = highlightText.slice(0, 200);
+    setOutput("workspace-reading-output", `
+      <div class="workspace-stack">
+        <article class="workspace-card workspace-card-highlight">
+          <div class="workspace-card-head">
+            <strong>${escapeHtml(detail.title || paperId)}</strong>
+            <span>${page ? `第 ${escapeHtml(String(page))} 页` : "来源片段"}</span>
+          </div>
+          <p class="block-note">从对话证据跳转至此。下方为语料中的相关段落。</p>
+        </article>
+        ${passages.length ? passages.map((item) => `
+          <details class="workspace-detail evidence-passage-detail" ${highlight && (item.text || "").includes(highlight.slice(0, 40)) ? "open" : ""}>
+            <summary>${escapeHtml(item.section || "片段")}${item.page != null ? ` · 第 ${escapeHtml(String(item.page))} 页` : ""}</summary>
+            <p class="evidence-passage-text">${escapeHtml(item.text || "")}</p>
+          </details>
+        `).join("") : `<p class="settings-empty">未找到匹配段落，可尝试生成阅读简报。</p>`}
+        <button type="button" class="ghost-button compact-button" id="workspace-reading-brief-from-source">生成完整简报</button>
+      </div>
+    `);
+    el("workspace-reading-brief-from-source")?.addEventListener("click", () => renderReadingBrief(paperId), { once: true });
+  } catch (error) {
+    setError("workspace-reading-output", error);
+  }
+}
+
+function bindLabOutputActions() {
+  const output = el("workspace-lab-output");
+  if (!output) return;
+  output.querySelectorAll(".lab-replay-btn").forEach((button) => {
+    if (button.dataset.bound === "true") return;
+    button.dataset.bound = "true";
+    button.addEventListener("click", () => {
+      const question = button.dataset.question || "";
+      const input = document.getElementById("chat-input");
+      if (input && question) {
+        input.value = question;
+        input.focus();
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    });
+  });
 }
 
 function renderMiniMetric(label, value) {
@@ -103,12 +215,13 @@ export function renderLatestEvidence() {
       ` : ""}
       ${stages.length ? `
         <div class="workspace-subsection">
-          <h4>检索链路</h4>
+          <h4>检索链路 ${data.diagnostics?.latency_ms ? `· ${escapeHtml(formatLatency(data.diagnostics.latency_ms))}` : ""}</h4>
           <div class="workspace-stage-grid">
             ${stages.map((stage) => `
               <div class="workspace-stage">
-                <span>${escapeHtml(stage.name || "stage")}</span>
+                <span>${escapeHtml(formatStageLabel(stage.name))}</span>
                 <strong>${escapeHtml(stage.status || "unknown")}</strong>
+                ${formatLatency(stage.latency_ms) ? `<small>${escapeHtml(formatLatency(stage.latency_ms))}</small>` : ""}
               </div>
             `).join("")}
           </div>
@@ -211,6 +324,7 @@ async function showDocumentDetail(paperId) {
 }
 
 export async function renderReadingBrief(paperId) {
+  await withButtonBusy("workspace-run-reading", async () => {
   const selected = paperId || el("workspace-reading-select")?.value;
   if (!selected) {
     setOutput("workspace-reading-output", `<p class="settings-empty">请先选择文档。</p>`);
@@ -244,6 +358,7 @@ export async function renderReadingBrief(paperId) {
   } catch (error) {
     setError("workspace-reading-output", error);
   }
+  });
 }
 
 function renderLabResults(payload) {
@@ -280,6 +395,7 @@ function renderLabResults(payload) {
               <strong>${escapeHtml(item.case_id)} · ${escapeHtml(item.config_id)}</strong>
               ${question ? `<p class="block-note">${escapeHtml(truncateText(question, 160))}</p>` : ""}
               <span>${escapeHtml((item.reasons || []).join(", "))}</span>
+              ${question ? `<button type="button" class="ghost-button compact-button lab-replay-btn" data-question="${escapeHtml(question)}">在对话中复现</button>` : ""}
             </div>
           `;
         }).join("") : `<p class="settings-empty">当前配置没有失败项。</p>`}
@@ -289,6 +405,7 @@ function renderLabResults(payload) {
 }
 
 export async function runWorkspaceLabBaseline() {
+  await withButtonBusy("workspace-run-lab-baseline", async () => {
   const topK = Number(el("workspace-lab-top-k")?.value || 5);
   const candidateK = Number(el("workspace-lab-candidate-k")?.value || 20);
   setLoading("workspace-lab-output", "运行 Baseline（内置 demo_eval）…");
@@ -299,12 +416,35 @@ export async function runWorkspaceLabBaseline() {
       configs: [{ config_id: "baseline", top_k: topK, candidate_k: candidateK, use_rerank: true }],
     });
     setOutput("workspace-lab-output", renderLabResults(payload));
+    bindLabOutputActions();
   } catch (error) {
     setError("workspace-lab-output", error);
   }
+  });
+}
+
+export async function runWorkspaceLabFromCases(cases) {
+  await withButtonBusy("workspace-run-lab", async () => {
+  const topK = Number(el("workspace-lab-top-k")?.value || 5);
+  const candidateK = Number(el("workspace-lab-candidate-k")?.value || 20);
+  setLoading("workspace-lab-output", "运行自定义 Eval…");
+  try {
+    const payload = await runRagLab({
+      top_k: topK,
+      candidate_k: candidateK,
+      cases,
+      configs: [{ config_id: "custom", top_k: topK, candidate_k: candidateK, use_rerank: true }],
+    });
+    setOutput("workspace-lab-output", renderLabResults(payload));
+    bindLabOutputActions();
+  } catch (error) {
+    setError("workspace-lab-output", error);
+  }
+  });
 }
 
 export async function runWorkspaceLab() {
+  await withButtonBusy("workspace-run-lab", async () => {
   const topK = Number(el("workspace-lab-top-k")?.value || 5);
   const candidateK = Number(el("workspace-lab-candidate-k")?.value || 20);
   setLoading("workspace-lab-output", "运行 RAG Lab...");
@@ -318,12 +458,15 @@ export async function runWorkspaceLab() {
       ],
     });
     setOutput("workspace-lab-output", renderLabResults(payload));
+    bindLabOutputActions();
   } catch (error) {
     setError("workspace-lab-output", error);
   }
+  });
 }
 
 export async function runWorkspaceReview() {
+  await withButtonBusy("workspace-run-review", async () => {
   const topic = el("workspace-review-topic")?.value?.trim();
   if (!topic) {
     setOutput("workspace-review-output", `<p class="settings-empty">请输入主题。</p>`);
@@ -363,9 +506,11 @@ export async function runWorkspaceReview() {
   } catch (error) {
     setError("workspace-review-output", error);
   }
+  });
 }
 
 export async function refreshWorkspaceStatus() {
+  await withButtonBusy("workspace-refresh-status", async () => {
   setLoading("workspace-status-output", "读取运行状态...");
   try {
     const status = await getRuntimeStatus();
@@ -394,34 +539,99 @@ export async function refreshWorkspaceStatus() {
   } catch (error) {
     setError("workspace-status-output", error);
   }
+  });
 }
 
-function activateTab(tabName) {
+function activateTab(tabName, { focusTab = false } = {}) {
   document.querySelectorAll(".workspace-tab").forEach((button) => {
-    button.classList.toggle("active", button.dataset.workspaceTab === tabName);
+    const isActive = button.dataset.workspaceTab === tabName;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    button.tabIndex = isActive ? 0 : -1;
+    if (focusTab && isActive) button.focus();
   });
   document.querySelectorAll(".workspace-view").forEach((view) => {
-    view.classList.toggle("active", view.dataset.workspaceView === tabName);
+    const isActive = view.dataset.workspaceView === tabName;
+    view.classList.toggle("active", isActive);
+    view.hidden = !isActive;
+    view.tabIndex = isActive ? 0 : -1;
   });
 }
 
-function openWorkspace() {
-  const panel = el("workspace-panel");
-  if (panel) panel.classList.add("workspace-open");
+function focusWorkspaceTabByIndex(index, { focusTab = true } = {}) {
+  const tabs = [...document.querySelectorAll(".workspace-tab")];
+  if (!tabs.length) return;
+  const normalized = ((index % tabs.length) + tabs.length) % tabs.length;
+  const tabName = tabs[normalized]?.dataset.workspaceTab;
+  if (tabName) activateTab(tabName, { focusTab });
 }
 
-function closeWorkspace() {
+function handleWorkspaceTabKeydown(event) {
+  const tabs = [...document.querySelectorAll(".workspace-tab")];
+  const currentIndex = tabs.findIndex((tab) => tab.getAttribute("aria-selected") === "true");
+  if (currentIndex < 0) return;
+
+  let nextIndex = currentIndex;
+  if (event.key === "ArrowRight") nextIndex = currentIndex + 1;
+  else if (event.key === "ArrowLeft") nextIndex = currentIndex - 1;
+  else if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = tabs.length - 1;
+  else return;
+
+  event.preventDefault();
+  focusWorkspaceTabByIndex(nextIndex, { focusTab: true });
+  const normalized = ((nextIndex % tabs.length) + tabs.length) % tabs.length;
+  const tabName = tabs[normalized]?.dataset.workspaceTab;
+  if (tabName === "documents" && cachedDocuments.length === 0) refreshWorkspaceDocuments();
+  if (tabName === "status") refreshWorkspaceStatus();
+  if (tabName === "evidence") renderLatestEvidence();
+}
+
+function revealWorkspacePanel() {
   const panel = el("workspace-panel");
-  if (panel) panel.classList.remove("workspace-open");
+  if (panel) {
+    panel.classList.add("workspace-open");
+    panel.removeAttribute("inert");
+    panel.setAttribute("aria-hidden", "false");
+    bindWorkspaceFocusTrap(panel);
+    focusWorkspaceCloseButton();
+  }
+  showWorkspaceScrim(true);
+  setWorkspaceShellInert(true);
+}
+
+export function openWorkspace() {
+  const settingsPanel = document.getElementById("settings-panel");
+  const settingsOpen = settingsPanel
+    && !settingsPanel.hidden
+    && !settingsPanel.classList.contains("settings-panel-closing");
+  if (settingsOpen) {
+    dismissSettingsPanelAnimated(revealWorkspacePanel);
+    return;
+  }
+  revealWorkspacePanel();
+}
+
+export function closeWorkspace() {
+  const panel = el("workspace-panel");
+  if (panel) {
+    panel.classList.remove("workspace-open");
+    panel.setAttribute("inert", "");
+    panel.setAttribute("aria-hidden", "true");
+    removeWorkspaceFocusTrap();
+  }
+  showWorkspaceScrim(false);
+  setWorkspaceShellInert(false);
+  focusWorkspaceToggle();
 }
 
 export function initWorkspace() {
-  const toggle = el("workspace-toggle");
-  const headerToggle = el("workspace-open-header");
   const close = el("workspace-close");
-  toggle?.addEventListener("click", openWorkspace);
-  headerToggle?.addEventListener("click", openWorkspace);
   close?.addEventListener("click", closeWorkspace);
+  el("workspace-scrim")?.addEventListener("click", closeWorkspace);
+
+  const tablist = document.querySelector(".workspace-tabs");
+  tablist?.addEventListener("keydown", handleWorkspaceTabKeydown);
 
   document.querySelectorAll(".workspace-tab").forEach((button) => {
     button.addEventListener("click", () => {
@@ -505,4 +715,9 @@ export function initWorkspace() {
 
   refreshWorkspaceDocuments();
   refreshWorkspaceStatus();
+  const panel = el("workspace-panel");
+  if (panel && !panel.classList.contains("workspace-open")) {
+    panel.setAttribute("inert", "");
+    panel.setAttribute("aria-hidden", "true");
+  }
 }

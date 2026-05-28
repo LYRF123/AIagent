@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from daidainiao_agent.cli import emit_json
 from daidainiao_agent import fastapi_server
+from daidainiao_agent.models import AnswerResult
 from daidainiao_agent.server import parse_multipart_file
 
 
@@ -44,6 +45,77 @@ def test_get_missing_session_returns_404() -> None:
     finally:
         fastapi_server._rate_limits.clear()
     assert response.status_code == 404
+    assert response.json()["request_id"]
+    assert response.headers["X-Request-ID"] == response.json()["request_id"]
+
+
+def test_json_endpoint_rejects_oversized_payload() -> None:
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        response = client.post(
+            "/ask",
+            content=b"{}",
+            headers={"Content-Type": "application/json", "Content-Length": str(fastapi_server.MAX_JSON_BODY_BYTES + 1)},
+        )
+    finally:
+        fastapi_server._rate_limits.clear()
+
+    assert response.status_code == 413
+    assert response.json()["error"] == "payload_too_large"
+
+
+def test_ask_validates_required_question() -> None:
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        response = client.post("/ask", json={"question": "   "})
+    finally:
+        fastapi_server._rate_limits.clear()
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+    assert "question" in response.json()["message"]
+
+
+def test_ask_validates_top_k_range() -> None:
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        response = client.post("/ask", json={"question": "What is ReAct?", "top_k": 99})
+    finally:
+        fastapi_server._rate_limits.clear()
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+    assert "top_k" in response.json()["message"]
+
+
+def test_ask_stream_emits_meta_and_final(monkeypatch) -> None:
+    class DummyApp:
+        def ask_stream(self, *args, **kwargs):
+            yield {"type": "chunk", "delta": "Hello"}
+            yield {
+                "type": "final",
+                "data": AnswerResult(question="Q", answer="Hello", evidence=[], trace=[]).model_dump(),
+            }
+
+    monkeypatch.setattr(fastapi_server, "get_app", lambda: DummyApp())
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    try:
+        response = client.post(
+            "/ask-stream",
+            json={"question": "What is ReAct?", "top_k": 3},
+            headers={"X-Request-ID": "stream-test"},
+        )
+    finally:
+        fastapi_server._rate_limits.clear()
+
+    assert response.status_code == 200
+    assert 'event: meta\ndata: {"request_id": "stream-test"}' in response.text
+    assert "event: chunk" in response.text
+    assert "event: final" in response.text
 
 
 def test_static_assets_do_not_count_against_rate_limit() -> None:
@@ -58,7 +130,9 @@ def test_static_assets_do_not_count_against_rate_limit() -> None:
 
         for _ in range(30):
             assert client.get("/health").status_code == 200
-        assert client.get("/health").status_code == 429
+        limited = client.get("/health")
+        assert limited.status_code == 429
+        assert limited.json()["request_id"]
     finally:
         fastapi_server._rate_limits.clear()
 
@@ -249,4 +323,34 @@ def test_api_token_middleware_blocks_without_bearer(monkeypatch) -> None:
         fastapi_server._rate_limits.clear()
         monkeypatch.delenv("DAIDAINIAO_API_TOKEN", raising=False)
     assert denied.status_code == 401
+    assert denied.json()["request_id"]
     assert allowed.status_code == 200
+
+
+def test_export_obsidian_and_bibtex_formats() -> None:
+    fastapi_server._rate_limits.clear()
+    client = TestClient(fastapi_server.app)
+    payload = {
+        "data": {
+            "question": "What is ReAct?",
+            "answer": "ReAct alternates reasoning and actions [1].",
+            "evidence": [
+                {
+                    "paper_id": "react",
+                    "title": "ReAct",
+                    "section": "summary",
+                    "text": "ReAct alternates reasoning traces with actions.",
+                    "score": 0.9,
+                }
+            ],
+        }
+    }
+    try:
+        obsidian = client.post("/export/markdown", json={**payload, "format": "obsidian"})
+        bibtex = client.post("/export/markdown", json={**payload, "format": "bibtex"})
+    finally:
+        fastapi_server._rate_limits.clear()
+    assert obsidian.status_code == 200
+    assert "tags: [daidainiao" in obsidian.json()["markdown"]
+    assert bibtex.status_code == 200
+    assert "@misc{react" in bibtex.json()["markdown"]

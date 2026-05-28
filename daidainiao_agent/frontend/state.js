@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
   selfCorrect: true,
   autoSyncEvidence: true,
   theme: "system",
+  qualityPreset: "accurate",
   modelProvider: "",
   modelApiKey: "",
   modelBaseUrl: "",
@@ -23,7 +24,7 @@ export function setIsSubmitting(val) { _isSubmitting = val; }
 
 // Sidebar
 export const sessionSidebarStorageKey = "daidainiao-agent-session-sidebar-open";
-export const compactSessionSidebarQuery = window.matchMedia("(max-width: 768px)");
+export const compactSessionSidebarQuery = window.matchMedia("(max-width: 1359px)");
 
 // DOM references
 export const appShell = document.querySelector(".app-shell");
@@ -59,6 +60,7 @@ function normalizeSettings(value = {}) {
     selfCorrect: value.selfCorrect !== false,
     autoSyncEvidence: value.autoSyncEvidence !== false,
     theme: value.theme === "dark" || value.theme === "light" ? value.theme : "system",
+    qualityPreset: value.qualityPreset === "fast" ? "fast" : "accurate",
     modelProvider: value.modelProvider || DEFAULT_SETTINGS.modelProvider,
     modelApiKey: value.modelApiKey || DEFAULT_SETTINGS.modelApiKey,
     modelBaseUrl: String(value.modelBaseUrl || value.baseUrl || DEFAULT_SETTINGS.modelBaseUrl).trim(),

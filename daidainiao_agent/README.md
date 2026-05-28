@@ -265,6 +265,24 @@ daidainiao_agent/
 **一键 Baseline**：单配置 `baseline` + 默认重排，用于快速冒烟。  
 **Fusion vs 重排**：对比 `use_rerank: false`（仅融合）与 `true`（DashScope 重排，无 Key 时可能跳过）。
 
+**Lab → 对话复现**：失败案例行可点「在对话中复现」，将问题填入输入框便于验证。
+
+**自定义 Eval**：Lab Tab 内「自定义 Eval 向导」支持按行粘贴 `问题 | paper_id | 关键词`，或上传 JSON。
+
+## 快 / 准模式
+
+顶栏 **快 / 准** 切换检索预设（设置中仍可细调）：
+
+| 模式 | 行为 |
+|------|------|
+| **快** | 跳过重排与自纠错，适合无 Key 或快速冒烟 |
+| **准** | 默认重排 + 自纠错，适合有模型 Key 的深度问答 |
+
+## 演示会话与导出
+
+- 欢迎页 **「查看可信问答示例」**：无需 Key 即可看到带引用与 Claim Audit 的示例回答。
+- 回答操作区支持 **Markdown / Obsidian / BibTeX** 导出（Obsidian 含 frontmatter 与脚注引用）。
+
 ## 测试
 
 ```powershell

@@ -11,9 +11,9 @@ import {
   loadSettings, saveSettings,
 } from "./state.js";
 
-import { refreshSessions, loadSession, createSession, deleteSession, uploadDocument, listDocuments, deleteDocument, getModelSettings, updateModelSettings, listAvailableModels, truncateSession } from "./api.js";
+import { refreshSessions, loadSession, createSession, deleteSession, uploadDocument, getModelSettings, updateModelSettings, listAvailableModels, truncateSession } from "./api.js";
 import { runChatStream, abortChatStream, getLastStreamQuestion } from "./stream.js";
-import { initWorkspace, renderLatestEvidence, refreshWorkspaceDocuments, refreshWorkspaceStatus } from "./workspace.js";
+import { initWorkspace, openWorkspace, closeWorkspace, openWorkspaceTab, renderLatestEvidence, refreshWorkspaceDocuments, refreshWorkspaceStatus, runWorkspaceLabFromCases } from "./workspace.js";
 import {
   toggleWelcomeScreen, scrollToBottom, renderSessionHistory, bindUserMessageActions,
 } from "./render/chat.js";
@@ -25,6 +25,150 @@ import {
 } from "./handlers/sidebar.js";
 import { confirmAction } from "./confirm.js";
 import { setSessionSearchQuery } from "./render/sessions.js";
+import { loadDemoSession } from "./demo.js";
+import { applyQualityPreset, getEffectiveAskOptions } from "./quality-preset.js";
+import { trackEvent } from "./analytics.js";
+import {
+  bindSettingsFocusTrap,
+  clearShellInert,
+  dismissSettingsPanelAnimated,
+  focusSettingsButton,
+  focusSettingsCloseButton,
+  removeSettingsFocusTrap,
+  setSettingsShellInert,
+  setModalBackdropInert,
+} from "./overlay.js";
+
+const densityQuery = window.matchMedia("(max-width: 768px)");
+const pointerFineQuery = window.matchMedia("(any-pointer: fine)");
+
+function syncViewportDensityMode() {
+  if (!document.documentElement?.classList?.toggle) return;
+  const isHighScaleNarrowDesktop =
+    densityQuery.matches &&
+    pointerFineQuery.matches &&
+    window.devicePixelRatio > 2;
+  document.documentElement.classList.toggle("narrow-desktop-density", isHighScaleNarrowDesktop);
+}
+
+syncViewportDensityMode();
+if (typeof window.addEventListener === "function") {
+  window.addEventListener("resize", syncViewportDensityMode);
+}
+if (densityQuery.addEventListener) {
+  densityQuery.addEventListener("change", syncViewportDensityMode);
+}
+if (pointerFineQuery.addEventListener) {
+  pointerFineQuery.addEventListener("change", syncViewportDensityMode);
+}
+
+function bindGlobalUiRouter() {
+  if (window.__DODO_UI_ROUTER_BOUND) return;
+  window.__DODO_UI_ROUTER_BOUND = true;
+
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+
+    const button = target.closest("button");
+    const welcomePrompt = target.closest(".welcome-prompt");
+    const presetBtn = target.closest(".quality-preset-btn");
+
+    if (button) {
+      switch (button.id) {
+        case "settings-button":
+          event.preventDefault();
+          void openSettingsPanel();
+          return;
+        case "settings-manage-knowledge":
+          event.preventDefault();
+          openKnowledgeFromSettings();
+          return;
+        case "new-chat":
+          event.preventDefault();
+          void handleNewChat();
+          return;
+        case "clear-chat":
+          event.preventDefault();
+          void handleClearChat();
+          return;
+        case "upload-doc-button": {
+          event.preventDefault();
+          const input = document.getElementById("upload-file-input");
+          input?.click();
+          closeSessionSidebarOnSmallScreen();
+          return;
+        }
+        case "workspace-toggle":
+          event.preventDefault();
+          openWorkspace();
+          closeSessionSidebarOnSmallScreen();
+          return;
+        case "workspace-close":
+          event.preventDefault();
+          closeWorkspace();
+          return;
+        case "load-demo-session":
+          event.preventDefault();
+          void loadDemoSession()
+            .then(() => {
+              renderLatestEvidence();
+              scrollToBottom({ smooth: true });
+            })
+            .catch((error) => showToast(error.message || "加载示例失败", "error"));
+          return;
+        case "chat-submit":
+          event.preventDefault();
+          void submitQuestion(event);
+          return;
+        case "chat-stop":
+          event.preventDefault();
+          if (getIsSubmitting()) abortChatStream();
+          return;
+        case "sidebar-toggle":
+          event.preventDefault();
+          if (appShell?.classList) {
+            const isOpen = appShell.classList.contains("sidebar-open")
+              && !appShell.classList.contains("sidebar-collapsed");
+            setSessionSidebarOpen(!isOpen);
+          }
+          return;
+        default:
+          break;
+      }
+    }
+
+    const statusCapsule = target.closest("#header-status-capsule");
+    if (statusCapsule) {
+      event.preventDefault();
+      openWorkspaceTab("status");
+      closeSessionSidebarOnSmallScreen();
+      return;
+    }
+
+    if (welcomePrompt && chatInput) {
+      event.preventDefault();
+      const text = welcomePrompt.dataset.prompt || welcomePrompt.textContent || "";
+      chatInput.value = text.trim();
+      chatInput.focus();
+      chatInput.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+
+    if (presetBtn) {
+      event.preventDefault();
+      const preset = presetBtn.dataset.preset === "fast" ? "fast" : "accurate";
+      appSettings = applyQualityPreset(appSettings, preset);
+      syncQualityPresetButtons();
+      updateHeaderStatusCapsule();
+      trackEvent("quality_preset_change", { preset });
+    }
+  }, true);
+
+  window.__DODO_UI_BOUND = true;
+}
+
+bindGlobalUiRouter();
 
 function applyTheme(theme) {
   const root = document.documentElement;
@@ -40,7 +184,6 @@ if (chatForm) {
 }
 
 let appSettings = loadSettings();
-let settingsCloseTimer = null;
 
 function mergeModelProfiles(localProfiles = [], remoteProfiles = []) {
   const merged = [];
@@ -167,8 +310,16 @@ function dismissImportSuccessNotice() {
   if (!overlay) return;
   clearTimeout(dismissImportSuccessNotice.autoTimer);
   clearTimeout(dismissImportSuccessNotice.removeTimer);
+  if (dismissImportSuccessNotice.onKeydown) {
+    document.removeEventListener("keydown", dismissImportSuccessNotice.onKeydown);
+    dismissImportSuccessNotice.onKeydown = null;
+  }
+  setModalBackdropInert(false);
   overlay.classList.remove("import-success-overlay-visible");
-  dismissImportSuccessNotice.removeTimer = setTimeout(() => overlay.remove(), 220);
+  dismissImportSuccessNotice.removeTimer = setTimeout(() => {
+    overlay.remove();
+    document.getElementById("upload-doc-button")?.focus();
+  }, 220);
 }
 
 function showImportSuccessNotice({ title, subtitle = "", warning = "" }) {
@@ -206,213 +357,57 @@ function showImportSuccessNotice({ title, subtitle = "", warning = "" }) {
 
   overlay.addEventListener("click", dismissImportSuccessNotice);
   document.body.appendChild(overlay);
+  setModalBackdropInert(true);
+  dismissImportSuccessNotice.onKeydown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      dismissImportSuccessNotice();
+    }
+  };
+  document.addEventListener("keydown", dismissImportSuccessNotice.onKeydown);
   requestAnimationFrame(() => overlay.classList.add("import-success-overlay-visible"));
   dismissImportSuccessNotice.autoTimer = setTimeout(dismissImportSuccessNotice, IMPORT_SUCCESS_DURATION_MS);
 }
 
-function renderDocumentList(items) {
-  const output = document.getElementById("settings-documents");
-  if (!output) return;
-  if (!items || items.length === 0) {
-    output.innerHTML = `<p class="settings-empty">还没有导入文档。</p>`;
-    return;
-  }
-  output.innerHTML = items.map((item) => {
-    const paperId = item.paper_id || "";
-    const title = item.title || item.file_name || paperId || "未命名文档";
-    const subtitle = item.file_name || item.source_label || paperId || "";
-    return `
-    <div class="settings-document" data-paper-id="${escapeHtml(paperId)}">
-      <div class="settings-document-main">
-        <strong>${escapeHtml(title)}</strong>
-        <span>${escapeHtml(subtitle)}</span>
-      </div>
-      <button
-        class="settings-document-delete ghost-button compact-button"
-        type="button"
-        data-paper-id="${escapeHtml(paperId)}"
-        aria-label="删除 ${escapeHtml(title)}"
-      >删除</button>
-    </div>
-  `;
-  }).join("");
-}
-
-async function handleSettingsDocumentDelete(paperId, title) {
-  const confirmed = await confirmAction({
-    title: "删除导入文档？",
-    message: `将从知识库移除「${title || paperId}」，上传文件也会一并删除。`,
-    confirmText: "删除",
-    tone: "danger",
+function openKnowledgeFromSettings() {
+  dismissSettingsPanelAnimated(() => {
+    openWorkspaceTab("documents");
+    closeSessionSidebarOnSmallScreen();
   });
-  if (!confirmed) return;
-
-  try {
-    await deleteDocument(paperId);
-    showToast("文档已删除", "success");
-    await refreshDocumentList();
-    refreshWorkspaceDocuments();
-    refreshWorkspaceStatus();
-  } catch (err) {
-    showToast("删除失败：" + (err.message || "未知错误"), "error");
-  }
-}
-
-async function refreshDocumentList() {
-  const output = document.getElementById("settings-documents");
-  if (output) output.innerHTML = `<p class="settings-empty">读取中...</p>`;
-  try {
-    const data = await listDocuments();
-    renderDocumentList(data.items || []);
-  } catch (err) {
-    if (output) output.innerHTML = `<p class="settings-empty">文档列表读取失败。</p>`;
-    console.warn("读取文档列表失败:", err);
-  }
 }
 
 function ensureSettingsPanel() {
-  let panel = document.getElementById("settings-panel");
+  const panel = document.getElementById("settings-panel");
   if (!panel) {
-    panel = document.createElement("div");
-    panel.id = "settings-panel";
-    panel.className = "settings-panel";
-    panel.hidden = true;
-    panel.innerHTML = `
-      <div class="settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <div class="settings-head">
-          <div>
-            <p class="panel-kicker">设置</p>
-            <h2 id="settings-title">模型 &amp; 检索</h2>
-          </div>
-          <button id="settings-close" class="settings-close" type="button" aria-label="关闭设置">×</button>
-        </div>
-        <div class="settings-scroll">
-          <section class="settings-block">
-            <h3 class="settings-block-title">模型连接</h3>
-            <div class="settings-form">
-              <label class="settings-stack">
-                <span class="settings-label">配置名称</span>
-                <input id="settings-profile-name" class="settings-input" type="text" placeholder="例如：GPT / Qwen" />
-              </label>
-              <label class="settings-stack">
-                <span class="settings-label">提供商</span>
-                <select id="settings-provider" class="settings-input settings-select">
-                  <option value="dashscope">DashScope (阿里云)</option>
-                  <option value="openai_compatible">OpenAI 兼容接口</option>
-                </select>
-              </label>
-              <label class="settings-stack">
-                <span class="settings-label">API Key</span>
-                <input id="settings-api-key" class="settings-input" type="password" placeholder="sk-..." autocomplete="off" />
-              </label>
-              <label class="settings-stack" id="settings-base-url-group" hidden>
-                <span class="settings-label">Base URL</span>
-                <input id="settings-base-url" class="settings-input" type="text" placeholder="https://api.openai.com/v1" />
-              </label>
-              <div class="settings-stack" id="settings-model-group">
-                <span class="settings-label">模型</span>
-                <div class="settings-model-row">
-                  <select id="settings-model-select" class="settings-input settings-select" hidden></select>
-                  <input id="settings-model" class="settings-input" type="text" placeholder="qwen-plus" />
-                  <button id="settings-fetch-models" class="ghost-button compact-button" type="button">获取模型</button>
-                </div>
-              </div>
-            </div>
-            <div id="settings-model-status" class="settings-model-status"></div>
-            <div class="settings-profile-block">
-              <div class="settings-subhead">
-                <h4>已保存配置</h4>
-                <span>点击切换</span>
-              </div>
-              <div id="settings-model-profiles" class="settings-profiles"></div>
-            </div>
-          </section>
-          <section class="settings-block">
-            <h3 class="settings-block-title">检索偏好</h3>
-            <div class="settings-retrieval-grid">
-              <label class="settings-stack settings-stack-inline">
-                <span class="settings-label">证据片段数</span>
-                <input id="settings-top-k" class="settings-input settings-input-narrow" type="number" min="1" max="8" step="1" />
-              </label>
-              <label class="settings-toggle">
-                <input id="settings-strict-grounded" type="checkbox" />
-                <span class="settings-toggle-ui" aria-hidden="true"></span>
-                <span class="settings-toggle-text">
-                  <strong>严格证据模式</strong>
-                  <small>无依据时拒绝编造</small>
-                </span>
-              </label>
-              <label class="settings-toggle">
-                <input id="settings-use-rerank" type="checkbox" />
-                <span class="settings-toggle-ui" aria-hidden="true"></span>
-                <span class="settings-toggle-text">
-                  <strong>启用重排</strong>
-                  <small>本地 BGE 模型，更准但更慢</small>
-                </span>
-              </label>
-              <label class="settings-toggle">
-                <input id="settings-self-correct" type="checkbox" />
-                <span class="settings-toggle-ui" aria-hidden="true"></span>
-                <span class="settings-toggle-text">
-                  <strong>自纠错检索</strong>
-                  <small>多轮检索与 CRAG，更慢</small>
-                </span>
-              </label>
-              <label class="settings-toggle">
-                <input id="settings-auto-sync-evidence" type="checkbox" />
-                <span class="settings-toggle-ui" aria-hidden="true"></span>
-                <span class="settings-toggle-text">
-                  <strong>回答后同步工作台证据</strong>
-                  <small>自动刷新证据 Tab</small>
-                </span>
-              </label>
-            </div>
-          </section>
-          <section class="settings-block">
-            <h3 class="settings-block-title">外观</h3>
-            <label class="settings-stack">
-              <span class="settings-label">主题</span>
-              <select id="settings-theme" class="settings-input settings-select">
-                <option value="system">跟随系统</option>
-                <option value="light">浅色</option>
-                <option value="dark">深色</option>
-              </select>
-            </label>
-          </section>
-          <section class="settings-block settings-block-muted">
-            <div class="settings-subhead">
-              <h4>已导入文档</h4>
-              <span>知识库来源</span>
-            </div>
-            <div id="settings-documents" class="settings-documents">
-              <p class="settings-empty">点击刷新文档查看列表。</p>
-            </div>
-          </section>
-        </div>
-        <div class="settings-footer settings-actions">
-          <button id="settings-save" class="primary-button compact-button" type="button">保存并应用</button>
-          <button id="settings-refresh-docs" class="ghost-button compact-button" type="button">刷新文档</button>
-          <p class="settings-footer-hint">已切换的配置可直接保存；新建或另存为时需填写配置名称</p>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(panel);
+    console.error("呆呆鸟：缺少 #settings-panel，请检查 index.html");
+    return null;
   }
+  bindSettingsPanelEvents(panel);
+  return panel;
+}
 
-  if (panel.dataset.bound === "true") return panel;
+function settingField(panel, selector) {
+  return panel?.querySelector(selector) || null;
+}
+
+function bindSettingsPanelEvents(panel) {
+  if (!panel || panel.dataset.bound === "true") return;
   panel.dataset.bound = "true";
 
-  panel.querySelector("#settings-close").addEventListener("click", closeSettingsPanel);
+  const closeBtn = settingField(panel, "#settings-close");
+  if (!closeBtn) {
+    console.error("呆呆鸟：设置面板缺少 #settings-close");
+    return;
+  }
+  closeBtn.addEventListener("click", closeSettingsPanel);
   panel.addEventListener("click", (event) => {
     if (event.target === panel) closeSettingsPanel();
   });
 
-  // Provider toggle
-  const providerSelect = panel.querySelector("#settings-provider");
-  providerSelect.addEventListener("change", () => syncProviderFields(panel));
+  const providerSelect = settingField(panel, "#settings-provider");
+  providerSelect?.addEventListener("change", () => syncProviderFields(panel));
 
-  // Fetch available models
-  panel.querySelector("#settings-fetch-models").addEventListener("click", async () => {
+  settingField(panel, "#settings-fetch-models")?.addEventListener("click", async () => {
     const provider = panel.querySelector("#settings-provider").value;
     const apiKey = panel.querySelector("#settings-api-key").value.trim();
     const baseUrl = panel.querySelector("#settings-base-url").value.trim();
@@ -465,7 +460,7 @@ function ensureSettingsPanel() {
   });
 
   // Click model-select to switch back to text input
-  panel.querySelector("#settings-model-select").addEventListener("dblclick", () => {
+  settingField(panel, "#settings-model-select")?.addEventListener("dblclick", () => {
     const modelSelect = panel.querySelector("#settings-model-select");
     const modelInput = panel.querySelector("#settings-model");
     modelSelect.hidden = true;
@@ -502,6 +497,7 @@ function ensureSettingsPanel() {
       });
       renderModelProfiles(panel);
       fillProfileNameField(panel);
+      updateHeaderStatusCapsule();
       if (statusEl) {
         statusEl.textContent = `已切换 · ${result.model || profile.model}`;
         statusEl.className = "settings-model-status status-ok";
@@ -519,7 +515,7 @@ function ensureSettingsPanel() {
     }
   });
 
-  panel.querySelector("#settings-save").addEventListener("click", async () => {
+  panel.querySelector("#settings-save")?.addEventListener("click", async () => {
     const topK = Number(panel.querySelector("#settings-top-k").value);
     const strictGrounded = panel.querySelector("#settings-strict-grounded").checked;
     const useRerank = panel.querySelector("#settings-use-rerank").checked;
@@ -606,50 +602,50 @@ function ensureSettingsPanel() {
     }
 
     applyTheme(appSettings.theme);
+    updateHeaderStatusCapsule();
+    syncQualityPresetButtons();
     closeSettingsPanel();
   });
-  panel.querySelector("#settings-refresh-docs").addEventListener("click", refreshDocumentList);
-  panel.querySelector("#settings-documents")?.addEventListener("click", async (event) => {
-    const button = event.target.closest(".settings-document-delete");
-    if (!button || button.disabled) return;
-    const paperId = button.dataset.paperId;
-    if (!paperId) return;
-    const row = button.closest(".settings-document");
-    const title = row?.querySelector("strong")?.textContent?.trim() || paperId;
-    button.disabled = true;
-    row?.setAttribute("aria-busy", "true");
-    try {
-      await handleSettingsDocumentDelete(paperId, title);
-    } finally {
-      button.disabled = false;
-      row?.removeAttribute("aria-busy");
-    }
-  });
-  return panel;
+  panel.querySelector("#settings-manage-knowledge")?.addEventListener("click", openKnowledgeFromSettings);
 }
 
 async function openSettingsPanel() {
-  const panel = ensureSettingsPanel();
-  panel.querySelector("#settings-top-k").value = String(appSettings.topK);
-  panel.querySelector("#settings-strict-grounded").checked = appSettings.strictGrounded;
-  panel.querySelector("#settings-use-rerank").checked = appSettings.useRerank;
-  panel.querySelector("#settings-self-correct").checked = appSettings.selfCorrect !== false;
-  panel.querySelector("#settings-auto-sync-evidence").checked = appSettings.autoSyncEvidence !== false;
-  panel.querySelector("#settings-theme").value = appSettings.theme || "system";
-  panel.querySelector("#settings-provider").value = appSettings.modelProvider || "dashscope";
-  panel.querySelector("#settings-api-key").value = appSettings.modelApiKey || "";
-  panel.querySelector("#settings-base-url").value = appSettings.modelBaseUrl || "";
-  showModelTextInput(panel, appSettings.modelName || "qwen-plus");
-  syncProviderFields(panel);
-  renderModelProfiles(panel);
-  fillProfileNameField(panel);
+  try {
+    closeWorkspace();
+    const panel = ensureSettingsPanel();
+    if (!panel) {
+      showToast("设置面板加载失败", "error");
+      return;
+    }
+    const topK = settingField(panel, "#settings-top-k");
+    if (topK) topK.value = String(appSettings.topK);
+    const strictGrounded = settingField(panel, "#settings-strict-grounded");
+    if (strictGrounded) strictGrounded.checked = appSettings.strictGrounded;
+    const useRerank = settingField(panel, "#settings-use-rerank");
+    if (useRerank) useRerank.checked = appSettings.useRerank;
+    const selfCorrect = settingField(panel, "#settings-self-correct");
+    if (selfCorrect) selfCorrect.checked = appSettings.selfCorrect !== false;
+    const autoSync = settingField(panel, "#settings-auto-sync-evidence");
+    if (autoSync) autoSync.checked = appSettings.autoSyncEvidence !== false;
+    const theme = settingField(panel, "#settings-theme");
+    if (theme) theme.value = appSettings.theme || "system";
+    const provider = settingField(panel, "#settings-provider");
+    if (provider) provider.value = appSettings.modelProvider || "dashscope";
+    const apiKey = settingField(panel, "#settings-api-key");
+    if (apiKey) apiKey.value = appSettings.modelApiKey || "";
+    const baseUrl = settingField(panel, "#settings-base-url");
+    if (baseUrl) baseUrl.value = appSettings.modelBaseUrl || "";
+    showModelTextInput(panel, appSettings.modelName || "qwen-plus");
+    syncProviderFields(panel);
+    renderModelProfiles(panel);
+    fillProfileNameField(panel);
 
-  clearTimeout(settingsCloseTimer);
-  panel.classList.remove("settings-panel-closing");
-  panel.hidden = false;
-  panel.querySelector("#settings-top-k").focus();
-  refreshDocumentList();
-  closeSessionSidebarOnSmallScreen();
+    panel.classList.remove("settings-panel-closing");
+    panel.hidden = false;
+    setSettingsShellInert(true);
+    bindSettingsFocusTrap(panel);
+    focusSettingsCloseButton();
+    closeSessionSidebarOnSmallScreen();
 
   // Fetch current model status from backend
   try {
@@ -684,21 +680,29 @@ async function openSettingsPanel() {
         statusEl.className = "settings-model-status";
       }
     }
+    updateHeaderStatusCapsule();
   } catch {
     // ignore fetch errors
+  }
+  } catch (error) {
+    console.error("打开设置失败:", error);
+    showToast("设置面板打开失败，请刷新页面重试", "error");
+    const failedPanel = document.getElementById("settings-panel");
+    if (failedPanel) {
+      failedPanel.hidden = true;
+      failedPanel.classList.remove("settings-panel-closing");
+    }
+    setSettingsShellInert(false);
+    removeSettingsFocusTrap();
   }
 }
 
 function closeSettingsPanel() {
   const panel = document.getElementById("settings-panel");
   if (!panel || panel.hidden || panel.classList.contains("settings-panel-closing")) return;
-  panel.classList.add("settings-panel-closing");
-  clearTimeout(settingsCloseTimer);
-  settingsCloseTimer = setTimeout(() => {
-    panel.hidden = true;
-    panel.classList.remove("settings-panel-closing");
-    settingsButton?.focus();
-  }, 260);
+  dismissSettingsPanelAnimated(() => {
+    focusSettingsButton();
+  });
 }
 
 function setComposerBusy(isBusy) {
@@ -712,12 +716,62 @@ function setComposerBusy(isBusy) {
     chatStop.hidden = !isBusy;
     chatStop.disabled = !isBusy;
   }
+  if (chatInput) {
+    chatInput.readOnly = isBusy;
+    chatInput.setAttribute("aria-busy", isBusy ? "true" : "false");
+  }
+  chatForm?.classList.toggle("is-busy", isBusy);
+}
+
+function resetUploadDocButton() {
+  const button = document.getElementById("upload-doc-button");
+  if (!button) return;
+  button.disabled = false;
+  button.innerHTML = `
+    <span class="nav-icon" aria-hidden="true"><svg><use href="#icon-doc"/></svg></span>
+    导入文档
+  `;
+}
+
+function showChatSkeleton() {
+  if (!chatMessages || !welcomeScreen) return null;
+  toggleWelcomeScreen(false);
+  for (const child of [...chatMessages.children]) {
+    if (child !== welcomeScreen) child.remove();
+  }
+  const skeleton = document.createElement("div");
+  skeleton.className = "chat-skeleton";
+  skeleton.innerHTML = `
+    <div class="chat-skeleton-line chat-skeleton-line-wide"></div>
+    <div class="chat-skeleton-line chat-skeleton-line-medium"></div>
+    <div class="chat-skeleton-line chat-skeleton-line-short"></div>
+  `;
+  chatMessages.appendChild(skeleton);
+  return skeleton;
+}
+
+function updateChatHeaderTitle(title) {
+  const heading = document.getElementById("assistant-title");
+  if (!heading) return;
+  const normalized = (title || "").trim();
+  if (normalized && normalized !== "新会话") {
+    heading.textContent = normalized;
+    heading.title = normalized;
+  } else {
+    heading.textContent = "呆呆鸟";
+    heading.title = "呆呆鸟";
+  }
 }
 
 async function submitQuestion(event, questionOverride) {
   event?.preventDefault?.();
   const question = (questionOverride || chatInput.value).trim();
-  if (!question) return;
+  if (!question) {
+    showToast("请输入问题", "info");
+    chatForm?.classList.add("composer-shake");
+    setTimeout(() => chatForm?.classList.remove("composer-shake"), 180);
+    return;
+  }
   if (getIsSubmitting()) return;
 
   setComposerBusy(true);
@@ -727,11 +781,8 @@ async function submitQuestion(event, questionOverride) {
 
   const payload = {
     question,
-    top_k: appSettings.topK,
     session_id: getCurrentSessionId() || undefined,
-    strict_grounded: appSettings.strictGrounded,
-    use_rerank: appSettings.useRerank,
-    self_correct: appSettings.selfCorrect !== false,
+    ...getEffectiveAskOptions(appSettings),
   };
 
   try {
@@ -746,50 +797,20 @@ async function submitQuestion(event, questionOverride) {
   }
 }
 
-// ── 1. 表单提交 ──────────────────────────────────────────────
-chatForm.addEventListener("submit", submitQuestion);
-chatSubmit.addEventListener("click", submitQuestion);
-chatStop?.addEventListener("click", () => {
-  if (!getIsSubmitting()) return;
-  abortChatStream();
-});
-
-// ── 2. Textarea 自动增高 ────────────────────────────────────
-chatInput.addEventListener("input", () => {
-  chatInput.style.height = "auto";
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + "px";
-});
-
-// ── 3. Enter 提交 / Shift+Enter 换行 ─────────────────────────
-chatInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) {
-    event.preventDefault();
-    chatForm.requestSubmit();
-  }
-});
-
-// ── 4. 草稿自动保存 ─────────────────────────────────────────
-let draftTimer = null;
-chatInput.addEventListener("input", () => {
-  clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => {
-    saveDraft(chatInput.value);
-  }, 300);
-});
-
-// ── 5. 新对话按钮 ───────────────────────────────────────────
-newChatButton.addEventListener("click", async () => {
+async function handleNewChat() {
   toggleWelcomeScreen(true);
-  for (const child of [...chatMessages.children]) {
-    if (child !== welcomeScreen) child.remove();
+  if (chatMessages) {
+    for (const child of [...chatMessages.children]) {
+      if (child !== welcomeScreen) child.remove();
+    }
   }
   await createSession();
+  updateChatHeaderTitle("呆呆鸟");
   closeSessionSidebarOnSmallScreen();
-  chatInput.focus();
-});
+  chatInput?.focus();
+}
 
-// ── 6. 清空对话按钮 ─────────────────────────────────────────
-clearChatButton.addEventListener("click", async () => {
+async function handleClearChat() {
   const sessionToDelete = getCurrentSessionId();
   if (sessionToDelete) {
     const confirmed = await confirmAction({
@@ -800,28 +821,55 @@ clearChatButton.addEventListener("click", async () => {
     });
     if (!confirmed) return;
   }
-  // 先清空 UI
   toggleWelcomeScreen(true);
-  for (const child of [...chatMessages.children]) {
-    if (child !== welcomeScreen) child.remove();
+  if (chatMessages) {
+    for (const child of [...chatMessages.children]) {
+      if (child !== welcomeScreen) child.remove();
+    }
   }
-  chatInput.focus();
-  // 再异步清理后端（不阻塞 UI）
+  chatInput?.focus();
+  updateChatHeaderTitle("呆呆鸟");
   if (sessionToDelete) {
     try { await deleteSession(sessionToDelete); } catch { /* ignore */ }
   }
+}
+
+// ── 1. 表单提交 ──────────────────────────────────────────────
+if (chatForm && chatInput && chatSubmit) {
+  chatForm.addEventListener("submit", submitQuestion);
+  window.__DODO_CHAT_READY = true;
+} else {
+  console.error("呆呆鸟：缺少聊天表单 DOM，主界面无法初始化。");
+}
+
+// ── 2. Textarea 自动增高 ────────────────────────────────────
+chatInput?.addEventListener("input", () => {
+  chatInput.style.height = "auto";
+  chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + "px";
+});
+
+// ── 3. Enter 提交 / Shift+Enter 换行 ─────────────────────────
+chatInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    chatForm?.requestSubmit();
+  }
+});
+
+// ── 4. 草稿自动保存 ─────────────────────────────────────────
+let draftTimer = null;
+chatInput?.addEventListener("input", () => {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    saveDraft(chatInput.value);
+  }, 300);
 });
 
 // ── 上传文档 ─────────────────────────────────────────────────
 const uploadDocButton = document.getElementById("upload-doc-button");
 const uploadFileInput = document.getElementById("upload-file-input");
 
-if (uploadDocButton && uploadFileInput) {
-  uploadDocButton.addEventListener("click", () => {
-    uploadFileInput.click();
-    closeSessionSidebarOnSmallScreen();
-  });
-
+if (uploadFileInput) {
   uploadFileInput.addEventListener("change", async () => {
     const file = uploadFileInput.files[0];
     if (!file) return;
@@ -848,50 +896,43 @@ if (uploadDocButton && uploadFileInput) {
         warning: doc.vector_warning || "",
       });
       uploadFileInput.value = "";
-      refreshDocumentList();
       refreshWorkspaceDocuments();
     } catch (err) {
       showToast("导入失败：" + (err.message || "未知错误"), "error");
     } finally {
-      uploadDocButton.disabled = false;
-      uploadDocButton.textContent = "";
-      const iconSpan = document.createElement("span");
-      iconSpan.setAttribute("aria-hidden", "true");
-      iconSpan.textContent = "\u{1F4C4}";
-      uploadDocButton.appendChild(iconSpan);
-      uploadDocButton.appendChild(document.createTextNode(" 导入文档"));
+      resetUploadDocButton();
     }
   });
 }
 
-if (settingsButton) {
-  settingsButton.addEventListener("click", openSettingsPanel);
-}
-
-initWorkspace();
-
-// ── 7. 侧栏切换 ─────────────────────────────────────────────
-sidebarToggle.addEventListener("click", () => {
-  const nextIsOpen = appShell.classList.contains("sidebar-collapsed");
-  setSessionSidebarOpen(nextIsOpen);
-});
-
-// ── 8. 会话列表点击委托 ─────────────────────────────────────
-sessionsOutput.addEventListener("click", async (event) => {
+// ── 7. 会话列表点击委托 ─────────────────────────────────────
+sessionsOutput?.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
 
   if (button.classList.contains("session-open")) {
     const sessionId = button.dataset.sessionId;
     if (!sessionId) return;
-    toggleWelcomeScreen(false);
-    for (const child of [...chatMessages.children]) {
-      if (child !== welcomeScreen) child.remove();
+    const skeleton = showChatSkeleton();
+    try {
+      const data = await loadSession(sessionId);
+      skeleton?.remove();
+      renderSessionHistory(data.messages);
+      updateChatHeaderTitle(button.querySelector("strong")?.textContent?.trim() || "呆呆鸟");
+      scrollToBottom({ smooth: false });
+      closeSessionSidebarOnSmallScreen();
+    } catch (err) {
+      skeleton?.remove();
+      toggleWelcomeScreen(true);
+      showToast("加载会话失败", "error");
+      console.warn("加载会话失败:", err);
     }
-    const data = await loadSession(sessionId);
-    renderSessionHistory(data.messages);
-    scrollToBottom({ smooth: false });
-    closeSessionSidebarOnSmallScreen();
+    return;
+  }
+
+  if (button.id === "sessions-retry") {
+    event.preventDefault();
+    void refreshSessions();
     return;
   }
 
@@ -909,6 +950,7 @@ sessionsOutput.addEventListener("click", async (event) => {
       await deleteSession(sessionId);
       if (sessionId === getCurrentSessionId()) {
         toggleWelcomeScreen(true);
+        updateChatHeaderTitle("呆呆鸟");
         for (const child of [...chatMessages.children]) {
           if (child !== welcomeScreen) child.remove();
         }
@@ -923,9 +965,19 @@ sessionsOutput.addEventListener("click", async (event) => {
 // ── 9. 键盘快捷键 ───────────────────────────────────────────
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    const importOverlay = document.getElementById("import-success-overlay");
+    if (importOverlay) {
+      dismissImportSuccessNotice();
+      return;
+    }
     const panel = document.getElementById("settings-panel");
     if (panel && !panel.hidden) {
       closeSettingsPanel();
+      return;
+    }
+    const workspacePanel = document.getElementById("workspace-panel");
+    if (workspacePanel?.classList.contains("workspace-open")) {
+      closeWorkspace();
       return;
     }
     if (compactSessionSidebarQuery.matches && appShell.classList.contains("sidebar-collapsed") === false) {
@@ -1007,53 +1059,214 @@ if (compactSessionSidebarQuery.addEventListener) {
   });
 }
 
-// ── 12. 初始化 ──────────────────────────────────────────────
-setSessionSidebarOpen(shouldStartWithSessionSidebarOpen(), { persist: false });
-const draft = loadDraft();
-if (draft) {
-  chatInput.value = draft;
+function updateHeaderStatusCapsule() {
+  const capsule = document.getElementById("header-status-capsule");
+  if (!capsule) return;
+  const profile = getActiveProfile();
+  const preset = appSettings.qualityPreset === "fast" ? "快" : "准";
+  const modelLabel = profile?.model ? profile.model : "本地规则";
+  const rerank = appSettings.useRerank !== false ? "重排开" : "重排关";
+  const strict = appSettings.strictGrounded !== false ? "严格证据" : "宽松";
+  capsule.textContent = `${preset} · ${modelLabel} · Top ${appSettings.topK || 5}`;
+  capsule.title = `点击查看运行状态 · ${preset}模式 · ${modelLabel} · Top ${appSettings.topK || 5} · ${rerank} · ${strict}`;
+  capsule.classList.toggle("is-live", Boolean(profile?.model));
 }
-toggleWelcomeScreen(true);
-applyTheme(appSettings.theme || "system");
-refreshSessions();
-renderLatestEvidence();
-refreshWorkspaceStatus();
 
-const sessionSearchInput = document.getElementById("session-search");
-if (sessionSearchInput) {
-  sessionSearchInput.addEventListener("input", () => {
-    setSessionSearchQuery(sessionSearchInput.value);
+function syncQualityPresetButtons() {
+  const preset = appSettings.qualityPreset === "fast" ? "fast" : "accurate";
+  document.querySelectorAll(".quality-preset-btn").forEach((button) => {
+    const isActive = button.dataset.preset === preset;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
 }
 
-// 注册消息编辑和重试的回调
-bindUserMessageActions(async (text, userMsgIndex, isEdit) => {
-  const sessionId = getCurrentSessionId();
-  if (getIsSubmitting()) return;
+function shortenWelcomeLabel(text, max = 22) {
+  const value = String(text || "").trim();
+  if (!value) return "示例问题";
+  if (/^(main|untitled|document|doc)$/i.test(value)) return "导入文档要点";
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1)}…`;
+}
 
-  const userMsgs = Array.from(chatMessages.querySelectorAll(".chat-msg-user"));
-  const targetUserMsg = userMsgs[userMsgIndex];
-  if (!targetUserMsg) return;
-
+async function refreshWelcomePromptsFromCorpus() {
+  const container = document.getElementById("welcome-prompts");
+  if (!container) return;
   try {
-    if (sessionId) {
-      const truncateIndex = 2 * userMsgIndex;
-      await truncateSession(sessionId, truncateIndex);
+    const { listKnowledgeDocuments } = await import("./api.js");
+    const docs = await listKnowledgeDocuments({ includeBase: true });
+    const items = docs.items || [];
+    const imported = items.filter((item) => item.imported);
+    const baseSamples = items.filter((item) => !item.imported).slice(0, 1);
+    const prompts = [];
+    imported.slice(0, 2).forEach((doc) => {
+      const title = doc.title || doc.paper_id;
+      prompts.push({
+        label: `解读 ${shortenWelcomeLabel(title, 18)}`,
+        question: `${title} 的核心方法、主要发现和局限是什么？`,
+      });
+    });
+    baseSamples.forEach((doc) => {
+      prompts.push({
+        label: doc.paper_id === "react" ? "ReAct 与工具调用" : shortenWelcomeLabel(doc.title || doc.paper_id),
+        question: doc.paper_id === "react"
+          ? "ReAct 是如何结合推理与工具调用的？"
+          : `简述 ${doc.title || doc.paper_id} 的主要贡献。`,
+      });
+    });
+    if (!prompts.length) return;
+    while (prompts.length < 3) {
+      prompts.push({
+        label: "Self-RAG 机制",
+        question: "Self-RAG 的自我反思检索机制是什么？",
+      });
     }
-
-    // 从 DOM 中删除目标消息及其后面的所有兄弟节点
-    let el = targetUserMsg;
-    while (el) {
-      const next = el.nextElementSibling;
-      el.remove();
-      el = next;
-    }
-
-    // 重新提交问题
-    await submitQuestion(null, text);
-  } catch (err) {
-    showToast("操作失败：" + (err.message || "未知错误"), "error");
+    container.innerHTML = prompts.slice(0, 3).map((item) => `
+      <button type="button" class="welcome-prompt" data-prompt="${escapeHtml(item.question)}">${escapeHtml(item.label)}</button>
+    `).join("");
+  } catch {
+    // keep static prompts
   }
-});
+}
 
-window.__DODO_CHAT_READY = true;
+function initLabEvalWizard() {
+  el("workspace-eval-wizard-run")?.addEventListener("click", async () => {
+    const raw = document.getElementById("workspace-eval-wizard-input")?.value || "";
+    const cases = parseEvalWizardText(raw);
+    if (!cases.length) {
+      showToast("请按格式填写至少一条 eval", "error");
+      return;
+    }
+    await runWorkspaceLabFromCases(cases);
+    trackEvent("eval_wizard_run", { num_cases: cases.length });
+  });
+
+  document.getElementById("workspace-lab-eval-file")?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const cases = Array.isArray(parsed) ? parsed : parsed.cases;
+      if (!Array.isArray(cases) || !cases.length) {
+        throw new Error("JSON 需为数组或含 cases 字段");
+      }
+      await runWorkspaceLabFromCases(cases);
+      trackEvent("eval_file_upload", { num_cases: cases.length });
+    } catch (error) {
+      showToast(error.message || "Eval JSON 无效", "error");
+    } finally {
+      event.target.value = "";
+    }
+  });
+}
+
+function parseEvalWizardText(raw) {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const parts = line.split("|").map((part) => part.trim());
+      const question = parts[0] || "";
+      const expected_paper_id = parts[1] || "";
+      const keywords = (parts[2] || "").split(",").map((k) => k.trim()).filter(Boolean);
+      return {
+        case_id: `wizard-${index + 1}`,
+        question,
+        expected_paper_ids: expected_paper_id ? [expected_paper_id] : [],
+        expected_keywords: keywords,
+      };
+    })
+    .filter((item) => item.question);
+}
+
+function el(id) {
+  return document.getElementById(id);
+}
+
+function initSidebarScrim() {
+  const scrim = document.getElementById("sidebar-scrim");
+  if (!scrim || !appShell?.classList) return;
+  scrim.addEventListener("click", () => {
+    if (compactSessionSidebarQuery.matches) {
+      setSessionSidebarOpen(false);
+    }
+  });
+  const syncScrim = () => {
+    if (!appShell?.classList) return;
+    const open = appShell.classList.contains("sidebar-open")
+      && !appShell.classList.contains("sidebar-collapsed");
+    scrim.hidden = !compactSessionSidebarQuery.matches || !open;
+    scrim.setAttribute("aria-hidden", String(scrim.hidden));
+  };
+  syncScrim();
+  if (compactSessionSidebarQuery.addEventListener) {
+    compactSessionSidebarQuery.addEventListener("change", syncScrim);
+  }
+  const observer = new MutationObserver(syncScrim);
+  observer.observe(appShell, { attributes: true, attributeFilter: ["class"] });
+}
+
+// ── 12. 初始化 ──────────────────────────────────────────────
+function bootstrapApp() {
+  try {
+    clearShellInert();
+    ensureSettingsPanel();
+    initWorkspace();
+    initSidebarScrim();
+    initLabEvalWizard();
+    setSessionSidebarOpen(shouldStartWithSessionSidebarOpen(), { persist: false });
+    const draft = loadDraft();
+    if (draft && chatInput) {
+      chatInput.value = draft;
+    }
+    toggleWelcomeScreen(true);
+    applyTheme(appSettings.theme || "system");
+    updateHeaderStatusCapsule();
+    syncQualityPresetButtons();
+    refreshWelcomePromptsFromCorpus();
+    refreshSessions();
+    renderLatestEvidence();
+    refreshWorkspaceStatus();
+
+    const sessionSearchInput = document.getElementById("session-search");
+    if (sessionSearchInput) {
+      sessionSearchInput.addEventListener("input", () => {
+        setSessionSearchQuery(sessionSearchInput.value);
+      });
+    }
+
+    bindUserMessageActions(async (text, userMsgIndex, isEdit) => {
+      const sessionId = getCurrentSessionId();
+      if (getIsSubmitting()) return;
+
+      const userMsgs = Array.from(chatMessages.querySelectorAll(".chat-msg-user"));
+      const targetUserMsg = userMsgs[userMsgIndex];
+      if (!targetUserMsg) return;
+
+      try {
+        if (sessionId) {
+          const truncateIndex = 2 * userMsgIndex;
+          await truncateSession(sessionId, truncateIndex);
+        }
+
+        let el = targetUserMsg;
+        while (el) {
+          const next = el.nextElementSibling;
+          el.remove();
+          el = next;
+        }
+
+        await submitQuestion(null, text);
+      } catch (err) {
+        showToast("操作失败：" + (err.message || "未知错误"), "error");
+      }
+    });
+  } catch (error) {
+    console.error("呆呆鸟：界面初始化失败", error);
+    showToast("部分功能加载失败，请硬刷新页面 (Ctrl+F5)", "error");
+  }
+}
+
+bootstrapApp();

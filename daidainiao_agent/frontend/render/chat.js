@@ -10,23 +10,37 @@ const THINKING_STEPS = [
 
 const THINKING_HTML = `
 <div class="chat-thinking">
-  <div class="thinking-head">
-    <span class="thinking-label">正在思考<span class="dot dot1">.</span><span class="dot dot2">.</span><span class="dot dot3">.</span></span>
+  <button type="button" class="thinking-toggle" aria-expanded="false">
+    <span class="thinking-label">正在思考…</span>
     <span class="thinking-progress">步骤 1 / ${THINKING_STEPS.length}</span>
+    <svg class="thinking-toggle-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+  </button>
+  <div class="thinking-inline-bar"><div class="thinking-bar-fill"></div></div>
+  <div class="thinking-body">
+    <ol class="thinking-steps">
+      ${THINKING_STEPS.map((step, index) => `
+        <li class="step" data-step="${step.key}" data-index="${index + 1}">
+          <span class="step-dot" aria-hidden="true"></span>
+          <span>
+            <strong>${step.label}</strong>
+            <small>${step.note}</small>
+          </span>
+        </li>
+      `).join("")}
+    </ol>
   </div>
-  <div class="thinking-bar"><div class="thinking-bar-fill"></div></div>
-  <ol class="thinking-steps">
-    ${THINKING_STEPS.map((step, index) => `
-      <li class="step" data-step="${step.key}" data-index="${index + 1}">
-        <span class="step-dot" aria-hidden="true"></span>
-        <span>
-          <strong>${step.label}</strong>
-          <small>${step.note}</small>
-        </span>
-      </li>
-    `).join("")}
-  </ol>
 </div>`;
+
+function bindThinkingToggle(thinkingEl) {
+  if (!thinkingEl || thinkingEl.dataset.boundToggle === "true") return;
+  thinkingEl.dataset.boundToggle = "true";
+  const toggle = thinkingEl.querySelector(".thinking-toggle");
+  if (!toggle) return;
+  toggle.addEventListener("click", () => {
+    const expanded = thinkingEl.classList.toggle("is-expanded");
+    toggle.setAttribute("aria-expanded", String(expanded));
+  });
+}
 
 export function appendUserMessage(text) {
   const html = `<div class="chat-msg chat-msg-user">
@@ -50,10 +64,12 @@ export function appendAssistantMessage({ showThinking = true } = {}) {
   const html = `<div class="chat-msg chat-msg-assistant">${showThinking ? THINKING_HTML : ""}<div class="chat-answer"></div></div>`;
   chatMessages.insertAdjacentHTML("beforeend", html);
   const el = chatMessages.lastElementChild;
+  const thinkingEl = el.querySelector(".chat-thinking");
+  if (thinkingEl) bindThinkingToggle(thinkingEl);
   return {
     el,
     answerEl: el.querySelector(".chat-answer"),
-    thinkingEl: el.querySelector(".chat-thinking"),
+    thinkingEl,
   };
 }
 
@@ -128,6 +144,8 @@ function buildExportActionsHtml() {
     <div class="answer-export-actions">
       <button type="button" class="ghost-button compact-button answer-export-copy" data-action="copy-markdown">复制 Markdown</button>
       <button type="button" class="ghost-button compact-button answer-export-download" data-action="download-markdown">下载 .md</button>
+      <button type="button" class="ghost-button compact-button answer-export-obsidian" data-action="export-obsidian">Obsidian</button>
+      <button type="button" class="ghost-button compact-button answer-export-bibtex" data-action="export-bibtex">BibTeX</button>
     </div>
   `;
 }
@@ -135,16 +153,18 @@ function buildExportActionsHtml() {
 export function bindAnswerExportActions(el, data) {
   const copyBtn = el.querySelector(".answer-export-copy");
   const downloadBtn = el.querySelector(".answer-export-download");
+  const obsidianBtn = el.querySelector(".answer-export-obsidian");
+  const bibtexBtn = el.querySelector(".answer-export-bibtex");
   if (!copyBtn || !downloadBtn) return;
 
-  const runExport = async () => {
+  const runExport = async (format = "markdown") => {
     const { exportMarkdown } = await import("../api.js");
-    return exportMarkdown(data);
+    return exportMarkdown(data, format);
   };
 
   copyBtn.addEventListener("click", async () => {
     try {
-      const result = await runExport();
+      const result = await runExport("markdown");
       await navigator.clipboard.writeText(result.markdown || "");
       copyBtn.textContent = "已复制";
       setTimeout(() => {
@@ -157,18 +177,40 @@ export function bindAnswerExportActions(el, data) {
 
   downloadBtn.addEventListener("click", async () => {
     try {
-      const result = await runExport();
-      const blob = new Blob([result.markdown || ""], { type: "text/markdown;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = result.filename || "answer.md";
-      link.click();
-      URL.revokeObjectURL(url);
+      const result = await runExport("markdown");
+      downloadBlob(result.markdown || "", result.filename || "answer.md", "text/markdown");
     } catch (error) {
       downloadBtn.textContent = "下载失败";
     }
   });
+
+  obsidianBtn?.addEventListener("click", async () => {
+    try {
+      const result = await runExport("obsidian");
+      downloadBlob(result.markdown || "", result.filename || "answer.md", "text/markdown");
+    } catch {
+      obsidianBtn.textContent = "失败";
+    }
+  });
+
+  bibtexBtn?.addEventListener("click", async () => {
+    try {
+      const result = await runExport("bibtex");
+      downloadBlob(result.markdown || "", result.filename || "refs.bib", "application/x-bibtex");
+    } catch {
+      bibtexBtn.textContent = "失败";
+    }
+  });
+}
+
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export function renderFinalAnswer(el, data) {
@@ -259,18 +301,39 @@ export function renderEvidenceSnippets(el, evidence) {
   const html = items
     .map(
       (item, i) => `
-    <details class="evidence-snippet" data-evidence-index="${i + 1}">
+    <details class="evidence-snippet" data-evidence-index="${i + 1}" data-paper-id="${escapeHtml(item.paper_id || "")}" data-page="${escapeHtml(item.page != null ? String(item.page) : "")}">
       <summary>
         <span>相关片段 ${i + 1}</span>
         <strong>${escapeHtml(truncateText(getItemTitle(item), 72))}</strong>
       </summary>
       ${renderEvidenceMeta(item, { includePaperId: false })}
       <p>${escapeHtml(truncateText(getItemText(item), 260))}</p>
+      ${item.paper_id ? `<button type="button" class="ghost-button compact-button evidence-source-btn" data-paper-id="${escapeHtml(item.paper_id)}" data-page="${escapeHtml(item.page != null ? String(item.page) : "")}">查看来源</button>` : ""}
     </details>`
     )
     .join("");
   el.insertAdjacentHTML("beforeend", `<div class="evidence-snippets">${html}</div>`);
   bindCitationClicks(el);
+  bindEvidenceSourceClicks(el);
+}
+
+function bindEvidenceSourceClicks(el) {
+  el.querySelectorAll(".evidence-source-btn").forEach((button) => {
+    if (button.dataset.boundSource === "true") return;
+    button.dataset.boundSource = "true";
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const paperId = button.dataset.paperId;
+      const page = button.dataset.page || null;
+      const snippet = button.closest(".evidence-snippet");
+      const text = snippet?.querySelector("p")?.textContent || "";
+      const { jumpToReadingSource } = await import("../workspace.js");
+      await jumpToReadingSource({ paperId, page, highlightText: text });
+      const { trackEvent } = await import("../analytics.js");
+      trackEvent("evidence_source_click", { paper_id: paperId, page });
+    });
+  });
 }
 
 export function renderSessionHistory(messages) {
@@ -283,12 +346,17 @@ export function renderSessionHistory(messages) {
     const { el } = appendAssistantMessage({ showThinking: false });
     const answerEl = el.querySelector(".chat-answer");
     const evidenceCount = msg.evidence ? msg.evidence.length : 0;
-    answerEl.innerHTML = renderSimpleMarkdown(msg.content, evidenceCount, msg.evidence || []);
+    answerEl.innerHTML = renderSimpleMarkdown(msg.content, evidenceCount, msg.evidence || []) + buildExportActionsHtml();
     renderRetrievalDiagnostics(el, msg.diagnostics);
     if (msg.evidence && msg.evidence.length > 0) {
       renderEvidenceSnippets(el, msg.evidence);
     }
     bindCitationClicks(el);
+    bindAnswerExportActions(el, {
+      answer: msg.content,
+      evidence: msg.evidence || [],
+      diagnostics: msg.diagnostics || null,
+    });
   });
 }
 
@@ -397,9 +465,9 @@ export function bindUserMessageActions(onRetry) {
 }
 
 export function toggleWelcomeScreen(visible) {
-  if (welcomeScreen) {
-    welcomeScreen.style.display = visible ? "" : "none";
-  }
+  if (!welcomeScreen) return;
+  welcomeScreen.classList.toggle("is-hidden", !visible);
+  welcomeScreen.hidden = !visible;
 }
 
 export function scrollToBottom({ smooth = false } = {}) {
@@ -416,13 +484,14 @@ export function clearStreamError(el) {
   el?.querySelector?.(".chat-stream-error")?.remove();
 }
 
-export function showStreamError(el, { message, hint = "", retryLabel = "重试" } = {}) {
+export function showStreamError(el, { message, hint = "", retryLabel = "重试", requestId = "" } = {}) {
   if (!el) return null;
   const answerEl = el.querySelector(".chat-answer") || el;
   answerEl.classList.remove("streaming-cursor");
   clearStreamError(el);
   const safeMessage = escapeHtml(message || "请求失败，请稍后重试");
   const safeHint = hint ? `<p class="chat-stream-error-hint">${escapeHtml(hint)}</p>` : "";
+  const safeRequestId = requestId ? `<code class="chat-stream-request-id">${escapeHtml(requestId)}</code>` : "";
   const wrapper = document.createElement("div");
   wrapper.className = "chat-stream-error";
   wrapper.setAttribute("role", "alert");
@@ -430,6 +499,7 @@ export function showStreamError(el, { message, hint = "", retryLabel = "重试" 
     <div class="chat-stream-error-body">
       <strong>${safeMessage}</strong>
       ${safeHint}
+      ${safeRequestId}
     </div>
     <button type="button" class="ghost-button compact-button chat-stream-retry">${escapeHtml(retryLabel)}</button>
   `;

@@ -76,12 +76,40 @@
 
 ---
 
+## 设计系统（2026-05 UI 重设计）
+
+样式分层（按加载顺序）：
+
+| 文件 | 职责 |
+|------|------|
+| `frontend/tokens.css` | 颜色、间距、圆角、字体；浅色 / 深色 / 跟随系统 |
+| `frontend/base.css` | Reset、排版、无障碍 |
+| `frontend/components.css` | 按钮、开关、Toast、确认框 |
+| `frontend/layout.css` | 壳、侧栏、对话、工作台、设置 |
+| `frontend/content.css` | 证据、引用、Markdown、流式错误 |
+
+气质：中性研究产品 + 克制暖色 accent；呆呆鸟 IP 仅作标识。已移除 `styles.css` / `ui-v2.css` 双源叠层。
+
+## 产品路线图（Q1–Q2 已落地）
+
+| Epic | 交付 |
+|------|------|
+| 演示会话 | 欢迎页一键加载 `frontend/data/demo_session.json` |
+| 快/准模式 | 顶栏预设 + localStorage + ask payload |
+| 证据跳转 | 证据「查看来源」→ 工作台阅读 Tab |
+| Lab 复现 | 失败 case 填入 composer；Eval 向导 + JSON 上传 |
+| 检索 Timeline | SSE 子阶段 + diagnostics 摘要 + 工作台同步 |
+| 导出 workflow | Obsidian / BibTeX（`POST /export/markdown?format=`） |
+| 语料 onboarding | 首访 banner + 动态 welcome chips |
+
+本地埋点：`localStorage` 键 `daidainiao-agent-analytics`（`answer_final`、`evidence_source_click` 等）。
+
 ## 关键文件
 
 | 文件 | 职责 |
 |------|------|
 | `frontend/index.html` | 壳结构：侧栏、对话、工作台、设置 |
-| `frontend/app.js` | 提交、设置、上传、快捷键、欢迎 prompt |
+| `frontend/app.js` | 提交、设置、上传、欢迎 prompt、顶栏状态胶囊 |
 | `frontend/stream.js` | SSE 读取、错误/停止/重试 |
 | `frontend/workspace.js` | 工作台 Tab 与 API 调用 |
 | `frontend/render/sessions.js` | 会话列表渲染与搜索 |

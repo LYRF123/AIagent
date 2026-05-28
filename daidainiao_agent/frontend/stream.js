@@ -1,6 +1,8 @@
 import { getCurrentSessionId, setCurrentSessionId, loadSettings } from "./state.js";
-import { refreshSessions } from "./api.js";
+import { parseApiError, refreshSessions } from "./api.js";
 import { renderLatestEvidence } from "./workspace.js";
+import { trackEvent } from "./analytics.js";
+import { getLastFinalPayload, setLastFinalPayload } from "./final-payload.js";
 import {
   appendUserMessage,
   appendAssistantMessage,
@@ -15,13 +17,10 @@ import {
   clearStreamError,
 } from "./render/chat.js";
 
-let activeController = null;
-let lastFinalPayload = null;
-let lastStreamQuestion = "";
+export { getLastFinalPayload, setLastFinalPayload };
 
-export function getLastFinalPayload() {
-  return lastFinalPayload;
-}
+let activeController = null;
+let lastStreamQuestion = "";
 
 export function isChatStreamActive() {
   return Boolean(activeController);
@@ -96,6 +95,11 @@ function publishStreamStatus(message) {
   if (live) live.textContent = message || "";
 }
 
+function errorHint(error, fallback = "请确认后端已启动，或稍后再试。") {
+  if (!error?.requestId) return fallback;
+  return `${fallback} 请求编号：${error.requestId}`;
+}
+
 export async function runChatStream(payload, { onError, onAbort, onRetry } = {}) {
   if (activeController) {
     activeController.abort();
@@ -115,6 +119,7 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
   const doneSteps = [];
   let firstChunkReceived = false;
   let usingSimulatedSteps = true;
+  let streamRequestId = "";
 
   const applyPipelineStep = (stepName) => {
     if (!stepName || !thinkingEl) {
@@ -160,11 +165,11 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
     });
   };
 
-  const finishWithError = (message, hint = "") => {
+  const finishWithError = (message, hint = "", meta = {}) => {
     clearTimeout(stepTimer);
     hideThinking(thinkingEl);
     publishStreamStatus(message);
-    const retryBtn = showStreamError(el, { message, hint });
+    const retryBtn = showStreamError(el, { message, hint, requestId: meta.requestId || streamRequestId || "" });
     if (retryBtn && typeof onRetry === "function") {
       retryBtn.addEventListener("click", () => onRetry(), { once: true });
     }
@@ -183,14 +188,7 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
     });
 
     if (!response.ok) {
-      let message = `请求失败：${response.status}`;
-      try {
-        const data = await response.json();
-        message = data.error || message;
-      } catch {
-        // ignore parse errors
-      }
-      throw new Error(message);
+      throw await parseApiError(response, "请求失败");
     }
 
     let finalPayload = null;
@@ -211,8 +209,16 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
         };
         if (["tfidf", "bm25", "vector", "fusion", "rerank"].includes(data.step)) {
           publishStreamStatus(`检索：${subLabels[data.step] || data.step}…`);
+          if (thinkingEl) {
+            const label = thinkingEl.querySelector(".thinking-label");
+            if (label) label.textContent = `正在思考：${subLabels[data.step]}…`;
+          }
         }
         applyPipelineStep(data.step);
+        return;
+      }
+      if (eventType === "meta") {
+        streamRequestId = data.request_id || streamRequestId;
         return;
       }
       if (eventType === "chunk") {
@@ -238,12 +244,17 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
       if (eventType === "final") {
         markCiteStep();
         finalPayload = data;
-        lastFinalPayload = data;
+        setLastFinalPayload(data);
         return;
       }
       if (eventType === "error") {
         handledError = true;
-        finishWithError(data.error || "流式输出失败", "可检查模型配置或网络后重试。");
+        streamRequestId = data.request_id || streamRequestId;
+        finishWithError(
+          data.message || data.error || "流式输出失败",
+          errorHint({ requestId: streamRequestId }, "可检查模型配置或网络后重试。"),
+          { requestId: streamRequestId },
+        );
       }
     });
 
@@ -276,6 +287,9 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
     if (settings.autoSyncEvidence !== false) {
       renderLatestEvidence();
     }
+    trackEvent("answer_final", {
+      evidence_count: Array.isArray(finalPayload.evidence) ? finalPayload.evidence.length : 0,
+    });
   } catch (error) {
     if (error.name === "AbortError") {
       clearTimeout(stepTimer);
@@ -295,7 +309,10 @@ export async function runChatStream(payload, { onError, onAbort, onRetry } = {})
       if (typeof onAbort === "function") onAbort();
       return;
     }
-    finishWithError(error.message || "未知错误", "请确认后端已启动，或稍后再试。");
+    if (error.requestId) {
+      streamRequestId = error.requestId;
+    }
+    finishWithError(error.message || "未知错误", errorHint(error), { requestId: streamRequestId });
   } finally {
     clearTimeout(stepTimer);
     if (activeController === controller) {

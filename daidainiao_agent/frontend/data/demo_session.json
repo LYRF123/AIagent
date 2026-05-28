@@ -1,0 +1,48 @@
+{
+  "question": "ReAct 是如何结合推理与工具调用的？",
+  "answer": "ReAct 通过**交替进行推理与动作**来结合语言模型的思考与外部工具调用 [1]。模型先产生推理轨迹（reasoning trace）以规划下一步，再执行动作（如检索或 API 调用）获取 **observations**，并据此修订后续推理 [1]。\n\n与仅做 chain-of-thought 的方法相比，这种「推理 + 行动 + 观察」的循环使模型能在需要外部信息的任务中更可控、更可解释 [1]。",
+  "question_type": "research",
+  "evidence": [
+    {
+      "paper_id": "react",
+      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+      "section": "summary",
+      "text": "ReAct alternates reasoning traces with actions so a language model can plan, gather observations, and revise its next step based on tool feedback.",
+      "score": 0.94,
+      "source_label": "demo corpus"
+    },
+    {
+      "paper_id": "react",
+      "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+      "section": "methods",
+      "text": "Interleave chain-of-thought style reasoning with explicit actions. Use observations from external environments to steer later reasoning steps.",
+      "score": 0.88,
+      "source_label": "demo corpus"
+    }
+  ],
+  "claim_audit": [
+    {
+      "status": "supported",
+      "claim": "ReAct 交替推理与动作并结合外部观察",
+      "reason": "与 evidence 中 summary 段落一致"
+    },
+    {
+      "status": "supported",
+      "claim": "中间步骤可见，比隐藏推理更可解释",
+      "reason": "与 findings 描述一致"
+    }
+  ],
+  "diagnostics": {
+    "fusion": { "method": "rrf", "status": "completed" },
+    "latency_ms": 420,
+    "pipeline_stages": [
+      { "name": "tfidf", "status": "completed", "latency_ms": 45 },
+      { "name": "bm25", "status": "completed", "latency_ms": 38 },
+      { "name": "vector", "status": "completed", "latency_ms": 120 },
+      { "name": "fusion", "status": "completed", "latency_ms": 12 },
+      { "name": "rerank", "status": "skipped", "latency_ms": 0 }
+    ]
+  },
+  "retrieval_confidence": 0.91,
+  "insufficient_evidence": false
+}

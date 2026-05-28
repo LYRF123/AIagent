@@ -1,4 +1,5 @@
 import { escapeHtml } from "./render/escape.js";
+import { setModalBackdropInert } from "./overlay.js";
 
 function ensureConfirmDialog() {
   let dialog = document.getElementById("app-confirm");
@@ -52,11 +53,13 @@ export function confirmAction({
   cancelButton.classList.remove("app-confirm-clicked");
   okButton.classList.remove("app-confirm-clicked");
   dialog.hidden = false;
+  setModalBackdropInert(true);
   cancelButton.focus();
 
   return new Promise((resolve) => {
     const cleanup = (value) => {
       dialog.hidden = true;
+      setModalBackdropInert(false);
       dialog.removeEventListener("click", onBackdrop);
       cancelButton.removeEventListener("click", onCancel);
       okButton.removeEventListener("click", onConfirm);

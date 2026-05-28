@@ -3,17 +3,38 @@ import { escapeHtml, formatTimestamp } from "./escape.js";
 
 let _allSessions = [];
 let _searchQuery = "";
+let _fetchFailed = false;
+
+function startOfDay(date) {
+  const copy = new Date(date);
+  copy.setHours(0, 0, 0, 0);
+  return copy;
+}
 
 function isToday(isoValue) {
   if (!isoValue) return false;
   const date = new Date(isoValue);
   if (Number.isNaN(date.getTime())) return false;
   const now = new Date();
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
+  return startOfDay(date).getTime() === startOfDay(now).getTime();
+}
+
+function isYesterday(isoValue) {
+  if (!isoValue) return false;
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const yesterday = startOfDay(new Date());
+  yesterday.setDate(yesterday.getDate() - 1);
+  return startOfDay(date).getTime() === yesterday.getTime();
+}
+
+function isWithinDays(isoValue, days) {
+  if (!isoValue) return false;
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) return false;
+  const cutoff = startOfDay(new Date());
+  cutoff.setDate(cutoff.getDate() - days);
+  return startOfDay(date).getTime() >= cutoff.getTime();
 }
 
 function filterSessions(items, query) {
@@ -55,7 +76,24 @@ export function setSessionSearchQuery(query) {
 
 export function setSessionItems(items) {
   _allSessions = Array.isArray(items) ? items : [];
+  _fetchFailed = false;
   renderSessionsFiltered();
+}
+
+export function renderSessionsFetchError() {
+  _fetchFailed = true;
+  if (!sessionsOutput) return;
+  sessionsOutput.innerHTML = `
+    <div class="session-fetch-error">
+      <p class="empty-note">会话列表加载失败</p>
+      <button id="sessions-retry" class="ghost-button compact-button" type="button">重试</button>
+    </div>
+  `;
+}
+
+export function getSessionTitleById(sessionId) {
+  const item = _allSessions.find((entry) => entry.session_id === sessionId);
+  return item?.title || "";
 }
 
 export function renderSessions(items) {
@@ -63,6 +101,11 @@ export function renderSessions(items) {
 }
 
 function renderSessionsFiltered() {
+  if (!sessionsOutput) return;
+  if (_fetchFailed) {
+    renderSessionsFetchError();
+    return;
+  }
   const filtered = filterSessions(_allSessions, _searchQuery);
   if (!_allSessions.length) {
     sessionsOutput.innerHTML = `<p class="empty-note">还没有会话。</p>`;
@@ -73,9 +116,13 @@ function renderSessionsFiltered() {
     return;
   }
   const todayItems = filtered.filter((item) => isToday(item.updated_at));
-  const earlierItems = filtered.filter((item) => !isToday(item.updated_at));
+  const yesterdayItems = filtered.filter((item) => isYesterday(item.updated_at));
+  const weekItems = filtered.filter((item) => !isToday(item.updated_at) && !isYesterday(item.updated_at) && isWithinDays(item.updated_at, 7));
+  const earlierItems = filtered.filter((item) => !isToday(item.updated_at) && !isYesterday(item.updated_at) && !isWithinDays(item.updated_at, 7));
   const groups = [
     renderSessionGroup("今天", todayItems),
+    renderSessionGroup("昨天", yesterdayItems),
+    renderSessionGroup("近 7 天", weekItems),
     renderSessionGroup("更早", earlierItems),
   ].filter(Boolean);
   sessionsOutput.innerHTML = groups.join("");

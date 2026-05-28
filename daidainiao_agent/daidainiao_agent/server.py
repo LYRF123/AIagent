@@ -202,6 +202,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type or "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
+        if resolved == INDEX_FILE.resolve() or resolved.suffix in {".js", ".css", ".html"}:
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)

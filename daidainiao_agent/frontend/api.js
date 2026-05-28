@@ -1,10 +1,97 @@
 import { getCurrentSessionId, setCurrentSessionId } from "./state.js";
-import { renderSessions, setSessionItems } from "./render/sessions.js";
+import { renderSessions, setSessionItems, renderSessionsFetchError } from "./render/sessions.js";
+
+export class ApiError extends Error {
+  constructor(message, { status = 0, code = "", requestId = "", detail = null } = {}) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.requestId = requestId;
+    this.detail = detail;
+  }
+}
+
+function detailToText(detail) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item?.msg || item?.message || item?.detail || String(item))
+      .filter(Boolean)
+      .join("; ");
+  }
+  if (detail && typeof detail === "object") {
+    return detail.message || detail.detail || detail.error || "";
+  }
+  return "";
+}
+
+async function readResponseBody(response) {
+  if (typeof response.text === "function") {
+    const raw = await response.text();
+    try {
+      return { raw, data: raw ? JSON.parse(raw) : {} };
+    } catch {
+      return { raw, data: {} };
+    }
+  }
+  if (typeof response.json === "function") {
+    try {
+      const data = await response.json();
+      return { raw: "", data: data || {} };
+    } catch {
+      return { raw: "", data: {} };
+    }
+  }
+  return { raw: "", data: {} };
+}
+
+function responseHeader(response, name) {
+  if (!response?.headers) return "";
+  if (typeof response.headers.get === "function") return response.headers.get(name) || "";
+  return response.headers[name] || response.headers[name.toLowerCase()] || "";
+}
+
+export async function parseApiError(response, fallback = "请求失败") {
+  const { raw, data } = await readResponseBody(response);
+  const requestId = data.request_id || responseHeader(response, "X-Request-ID");
+  const detailText = detailToText(data.detail);
+  const status = response.status || 0;
+  const message = data.message || data.error || detailText || (raw && !raw.startsWith("{") ? raw.trim().slice(0, 240) : "") || `${fallback}${status ? `（HTTP ${status}）` : ""}`;
+  return new ApiError(message, {
+    status,
+    code: data.error || data.code || "",
+    requestId,
+    detail: data.detail ?? data,
+  });
+}
+
+async function parseJsonResponse(response, fallback) {
+  const { raw, data } = await readResponseBody(response);
+  if (!response.ok) {
+    throw await parseApiError({
+      status: response.status || 0,
+      headers: response.headers,
+      text: async () => raw,
+      json: async () => data,
+    }, fallback);
+  }
+  return data;
+}
+
+async function requestJson(url, { method = "GET", body } = {}, fallback = "请求失败") {
+  const options = { method };
+  if (body !== undefined) {
+    options.headers = { "Content-Type": "application/json" };
+    options.body = JSON.stringify(body);
+  }
+  const response = await fetch(url, options);
+  return parseJsonResponse(response, fallback);
+}
 
 export async function refreshSessions(nextSessionId = getCurrentSessionId()) {
   try {
-    const response = await fetch("/sessions");
-    const data = await response.json();
+    const data = await requestJson("/sessions", {}, "刷新会话列表失败");
     const items = data.items || [];
     if (items.some((item) => item.session_id === nextSessionId)) {
       setCurrentSessionId(nextSessionId);
@@ -14,16 +101,13 @@ export async function refreshSessions(nextSessionId = getCurrentSessionId()) {
     setSessionItems(items);
   } catch (error) {
     console.warn("刷新会话列表失败:", error);
+    renderSessionsFetchError();
   }
 }
 
 export async function loadSession(sessionId) {
   try {
-    const response = await fetch(`/sessions/${encodeURIComponent(sessionId)}`);
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || `Load failed: ${response.status}`);
-    }
+    const data = await requestJson(`/sessions/${encodeURIComponent(sessionId)}`, {}, "加载会话失败");
     setCurrentSessionId(sessionId);
     await refreshSessions(sessionId);
     return { messages: data.messages || data.history || [], session_id: data.session_id || sessionId };
@@ -34,17 +118,10 @@ export async function loadSession(sessionId) {
 
 export async function createSession() {
   try {
-    const response = await fetch("/sessions", {
+    const data = await requestJson("/sessions", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || `Create failed: ${response.status}`);
-    }
+      body: {},
+    }, "新建会话失败");
     setCurrentSessionId(data.session.session_id);
     renderSessions(data.sessions || []);
     return data.session;
@@ -60,179 +137,81 @@ export async function uploadDocument(file) {
     method: "POST",
     body: formData,
   });
-  let data = {};
-  const raw = await response.text();
-  try {
-    data = raw ? JSON.parse(raw) : {};
-  } catch {
-    data = {};
-  }
-  if (!response.ok) {
-    const detail = data.detail;
-    const detailText = typeof detail === "string" ? detail : Array.isArray(detail) ? detail.map((d) => d.msg || d).join("; ") : "";
-    const fallback = raw && !raw.startsWith("{") ? raw.trim().slice(0, 240) : "";
-    throw new Error(data.error || detailText || fallback || `导入失败（HTTP ${response.status}），请重启后端服务后重试`);
-  }
-  return data;
+  return parseJsonResponse(response, "导入失败");
 }
 
 export async function listDocuments() {
-  const response = await fetch("/documents");
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || `List failed: ${response.status}`);
-  }
-  return data;
+  return requestJson("/documents", {}, "读取文档列表失败");
 }
 
 export async function deleteDocument(paperId) {
-  const response = await fetch("/delete-document", {
+  return requestJson("/delete-document", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ paper_id: paperId }),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Delete failed: ${response.status}`);
-  }
-  return data;
+    body: { paper_id: paperId },
+  }, "删除文档失败");
 }
 
 export async function listKnowledgeDocuments({ includeBase = true } = {}) {
-  const response = await fetch(`/knowledge-documents?include_base=${includeBase ? "true" : "false"}`);
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || `Knowledge list failed: ${response.status}`);
-  }
-  return data;
+  return requestJson(`/knowledge-documents?include_base=${includeBase ? "true" : "false"}`, {}, "读取知识库失败");
 }
 
 export async function getDocumentDetail(paperId, { passageLimit = 12 } = {}) {
-  const response = await fetch(`/documents/${encodeURIComponent(paperId)}?passage_limit=${encodeURIComponent(String(passageLimit))}`);
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Document detail failed: ${response.status}`);
-  }
-  return data;
+  return requestJson(`/documents/${encodeURIComponent(paperId)}?passage_limit=${encodeURIComponent(String(passageLimit))}`, {}, "读取文档详情失败");
 }
 
 export async function getDocumentBrief(paperId) {
-  const response = await fetch(`/documents/${encodeURIComponent(paperId)}/brief`);
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Document brief failed: ${response.status}`);
-  }
-  return data;
+  return requestJson(`/documents/${encodeURIComponent(paperId)}/brief`, {}, "生成阅读摘要失败");
 }
 
-export async function exportMarkdown(data) {
-  const response = await fetch("/export/markdown", {
+export async function exportMarkdown(data, format = "markdown") {
+  return requestJson("/export/markdown", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ data }),
-  });
-  const body = await response.json();
-  if (!response.ok) {
-    throw new Error(body.detail || body.error || `Export failed: ${response.status}`);
-  }
-  return body;
+    body: { data, format },
+  }, "导出失败");
 }
 
 export async function runRagLab(payload = {}) {
-  const response = await fetch("/rag-lab/evaluate", {
+  return requestJson("/rag-lab/evaluate", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `RAG Lab failed: ${response.status}`);
-  }
-  return data;
+    body: payload,
+  }, "RAG Lab 运行失败");
 }
 
 export async function runDeepReview(payload = {}) {
-  const response = await fetch("/deep-review", {
+  return requestJson("/deep-review", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Review failed: ${response.status}`);
-  }
-  return data;
+    body: payload,
+  }, "生成综述失败");
 }
 
 export async function getRuntimeStatus() {
-  const response = await fetch("/status");
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Status failed: ${response.status}`);
-  }
-  return data;
+  return requestJson("/status", {}, "读取运行状态失败");
 }
 
 export async function getModelSettings() {
-  const response = await fetch("/settings/model");
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Model settings failed: ${response.status}`);
-  }
-  return data;
+  return requestJson("/settings/model", {}, "读取模型设置失败");
 }
 
 export async function updateModelSettings(payload) {
-  const response = await fetch("/settings/model", {
+  return requestJson("/settings/model", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Model settings update failed: ${response.status}`);
-  }
-  return data;
+    body: payload,
+  }, "更新模型设置失败");
 }
 
 export async function listAvailableModels(payload) {
-  const response = await fetch("/settings/models/list", {
+  return requestJson("/settings/models/list", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data.error || data.detail || `Model list failed: ${response.status}`);
-  }
-  return data;
+    body: payload,
+  }, "获取模型列表失败");
 }
 
 export async function deleteSession(sessionId) {
   try {
-    const response = await fetch("/delete-session", {
+    const data = await requestJson("/delete-session", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ session_id: sessionId }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || `Delete failed: ${response.status}`);
-    }
+      body: { session_id: sessionId },
+    }, "删除会话失败");
     if (getCurrentSessionId() === sessionId) {
       setCurrentSessionId("");
     }
@@ -244,17 +223,10 @@ export async function deleteSession(sessionId) {
 
 export async function truncateSession(sessionId, messageIndex) {
   try {
-    const response = await fetch(`/sessions/${encodeURIComponent(sessionId)}/truncate`, {
+    const data = await requestJson(`/sessions/${encodeURIComponent(sessionId)}/truncate`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ message_index: messageIndex }),
-    });
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error || `Truncate failed: ${response.status}`);
-    }
+      body: { message_index: messageIndex },
+    }, "截断会话失败");
     renderSessions(data.sessions || []);
     return data.session;
   } catch (error) {
